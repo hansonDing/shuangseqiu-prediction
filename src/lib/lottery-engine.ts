@@ -365,98 +365,22 @@ export function predict(draws: DrawRecord[], weights?: {
       gapScores[i] * w.balance;
   }
 
-  // === 蓝球得分 (v3: 多策略融合 + 周期分析) ===
+  // === 蓝球得分 (同样使用渐进遗漏) ===
   const blueScores: Record<number, number> = {};
   const maxBlueCount = Math.max(...freq.blue.map((f) => f.count), 1);
-
-  // 策略A: 频率 + 渐进遗漏 (降低权重)
   for (let i = 1; i <= 16; i++) {
     const item = freq.blue.find((f) => f.number === i);
     const freqScore = item ? item.count / maxBlueCount : 0;
     const gapScore = item ? progressiveGapWeight(item.last_seen, item.avg_interval) : 0;
-    blueScores[i] = freqScore * 0.2 + gapScore * 0.25;
+    blueScores[i] = freqScore * 0.5 + gapScore * 0.5;
   }
-
-  // 策略B: 时间衰减近期热度
-  const recentBlueDecay: Record<number, number> = {};
-  for (let i = 1; i <= 16; i++) recentBlueDecay[i] = 0;
-  recent.forEach((draw, idx) => {
-    const weight = (recent.length - idx) / recent.length;
-    recentBlueDecay[draw.blue] += weight;
-  });
-  const maxBlueDecay = Math.max(...Object.values(recentBlueDecay), 0.01);
+  // 蓝球近期热度
+  const recentBlueCounts: Record<number, number> = {};
+  for (let i = 1; i <= 16; i++) recentBlueCounts[i] = 0;
+  recent.forEach((draw) => { recentBlueCounts[draw.blue]++; });
+  const maxRecentBlue = Math.max(...Object.values(recentBlueCounts), 1);
   for (let i = 1; i <= 16; i++) {
-    blueScores[i] += (recentBlueDecay[i] / maxBlueDecay) * 0.15;
-  }
-
-  // 策略C: 奇偶/大小周期分析 (改进版)
-  const last10 = sorted.slice(-10);
-  const blueHistory = last10.map((d) => d.blue);
-
-  // 奇偶模式: 分析最近5期的奇偶变化趋势
-  const last5OddEven = blueHistory.slice(-5).map((b) => b % 2);
-  const lastBlueOddEven = last5OddEven[last5OddEven.length - 1];
-  // 计算奇偶连续次数
-  let consecutiveSame = 1;
-  for (let i = last5OddEven.length - 2; i >= 0; i--) {
-    if (last5OddEven[i] === last5OddEven[i + 1]) consecutiveSame++;
-    else break;
-  }
-  // 连续同奇偶越多，下期变化概率越高
-  const changeProb = Math.min(0.8, 0.3 + consecutiveSame * 0.15);
-  const predictedOddEven = changeProb > 0.5 ? 1 - lastBlueOddEven : lastBlueOddEven;
-
-  // 大小模式: 同样分析连续变化
-  const last5BigSmall = blueHistory.slice(-5).map((b) => b > 8 ? 1 : 0);
-  const lastBlueBigSmall = last5BigSmall[last5BigSmall.length - 1];
-  let bsConsecutive = 1;
-  for (let i = last5BigSmall.length - 2; i >= 0; i--) {
-    if (last5BigSmall[i] === last5BigSmall[i + 1]) bsConsecutive++;
-    else break;
-  }
-  const bsChangeProb = Math.min(0.8, 0.3 + bsConsecutive * 0.15);
-  const predictedBigSmall = bsChangeProb > 0.5 ? 1 - lastBlueBigSmall : lastBlueBigSmall;
-
-  // 给符合模式的蓝球加分 (降低权重避免过度影响)
-  for (let i = 1; i <= 16; i++) {
-    const isOdd = i % 2 === 1;
-    const isBig = i > 8;
-    let patternBonus = 0;
-    if (isOdd === (predictedOddEven === 1)) patternBonus += 0.08;
-    if (isBig === (predictedBigSmall === 1)) patternBonus += 0.08;
-    blueScores[i] += patternBonus;
-  }
-
-  // 策略D: 遗漏周期分析 (新增)
-  // 蓝球平均遗漏周期约16期，超过平均周期的号码有回补倾向
-  for (let i = 1; i <= 16; i++) {
-    const item = freq.blue.find((f) => f.number === i);
-    if (item && item.last_seen > 12) {
-      // 超过12期未出现，给予额外回补分
-      const overdueBonus = Math.min(0.15, (item.last_seen - 12) * 0.02);
-      blueScores[i] += overdueBonus;
-    }
-  }
-
-  // 策略E: 红蓝关联分析
-  const highFreqReds = new Set(
-    freq.red
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 12)
-      .map((f) => f.number)
-  );
-  const blueRedCorrelation: Record<number, number> = {};
-  for (let i = 1; i <= 16; i++) blueRedCorrelation[i] = 0;
-  recent.forEach((draw) => {
-    const drawReds = [draw.red1, draw.red2, draw.red3, draw.red4, draw.red5, draw.red6];
-    const overlap = drawReds.filter((r) => highFreqReds.has(r)).length;
-    if (overlap >= 2) {
-      blueRedCorrelation[draw.blue] += overlap / 6;
-    }
-  });
-  const maxCorrelation = Math.max(...Object.values(blueRedCorrelation), 0.01);
-  for (let i = 1; i <= 16; i++) {
-    blueScores[i] += (blueRedCorrelation[i] / maxCorrelation) * 0.08;
+    blueScores[i] += (recentBlueCounts[i] / maxRecentBlue) * 0.3;
   }
 
   // === 确定性组合生成 ===
@@ -469,7 +393,7 @@ export function predict(draws: DrawRecord[], weights?: {
   const blueCandidates = Object.entries(blueScores)
     .map(([num, score]) => ({ number: parseInt(num), score }))
     .sort((a, b) => b.score - a.score);
-  const topBlues = blueCandidates.slice(0, 8); // 扩大到 Top 8 增加多样性
+  const topBlues = blueCandidates.slice(0, 5);
 
   // 从 Top 18 中生成所有 C(18,6) 组合的子集，用贪心策略筛选
   // 为了性能，使用分层采样: 按得分排名分为高/中/低三档，每档取2个
