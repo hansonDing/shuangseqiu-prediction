@@ -13,7 +13,8 @@ import {
 } from 'recharts';
 import {
   TrendingUp, BarChart3, Target, History, RefreshCw,
-  CircleDot, Activity, Zap, Award,
+  CircleDot, Activity, Zap, Award, Download, CheckCircle2,
+  AlertCircle, Clock,
 } from 'lucide-react';
 
 interface FrequencyItem {
@@ -184,6 +185,12 @@ export default function LotteryDashboard() {
   const [backtesting, setBacktesting] = useState(false);
   const [weights, setWeights] = useState({ frequency: 0.4, recency: 0.35, balance: 0.25 });
   const [activeTab, setActiveTab] = useState('overview');
+  const [updateStatus, setUpdateStatus] = useState<{
+    updating: boolean;
+    lastUpdate: string | null;
+    message: string | null;
+    error: boolean;
+  }>({ updating: false, lastUpdate: null, message: null, error: false });
 
   const fetchAnalysis = useCallback(async () => {
     setLoading(true);
@@ -201,6 +208,38 @@ export default function LotteryDashboard() {
   useEffect(() => {
     fetchAnalysis();
   }, [fetchAnalysis]);
+
+  const handleUpdateData = async () => {
+    setUpdateStatus({ updating: true, lastUpdate: null, message: '正在获取最新开奖数据...', error: false });
+    try {
+      const res = await fetch('/api/update', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setUpdateStatus({
+          updating: false,
+          lastUpdate: data.last_update,
+          message: data.message,
+          error: false,
+        });
+        // 刷新分析数据
+        fetchAnalysis();
+      } else {
+        setUpdateStatus({
+          updating: false,
+          lastUpdate: null,
+          message: data.error || '更新失败',
+          error: true,
+        });
+      }
+    } catch (err) {
+      setUpdateStatus({
+        updating: false,
+        lastUpdate: null,
+        message: '网络错误，请稍后重试',
+        error: true,
+      });
+    }
+  };
 
   const handlePredict = async () => {
     setPredicting(true);
@@ -258,11 +297,48 @@ export default function LotteryDashboard() {
                 <p className="text-xs text-muted-foreground">基于历史数据的多维度分析引擎</p>
               </div>
             </div>
-            <Button variant="outline" size="sm" onClick={fetchAnalysis}>
-              <RefreshCw className="w-4 h-4 mr-2" />
-              刷新数据
-            </Button>
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleUpdateData}
+                disabled={updateStatus.updating}
+                className="gap-2"
+              >
+                {updateStatus.updating ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Download className="w-4 h-4" />
+                )}
+                {updateStatus.updating ? '更新中...' : '更新数据'}
+              </Button>
+              <Button variant="outline" size="sm" onClick={fetchAnalysis}>
+                <RefreshCw className="w-4 h-4 mr-2" />
+                刷新
+              </Button>
+            </div>
           </div>
+          {/* Update Status Bar */}
+          {updateStatus.message && (
+            <div className={`mt-3 flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${
+              updateStatus.error
+                ? 'bg-destructive/10 text-destructive'
+                : 'bg-emerald-500/10 text-emerald-400'
+            }`}>
+              {updateStatus.error ? (
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              ) : (
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              )}
+              <span>{updateStatus.message}</span>
+              {updateStatus.lastUpdate && (
+                <span className="ml-auto flex items-center gap-1 text-muted-foreground">
+                  <Clock className="w-3 h-3" />
+                  {updateStatus.lastUpdate}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </header>
 
@@ -284,6 +360,10 @@ export default function LotteryDashboard() {
             <TabsTrigger value="backtest" className="gap-2">
               <History className="w-4 h-4" />
               回测验证
+            </TabsTrigger>
+            <TabsTrigger value="datasource" className="gap-2">
+              <Download className="w-4 h-4" />
+              数据管理
             </TabsTrigger>
           </TabsList>
 
@@ -767,6 +847,154 @@ export default function LotteryDashboard() {
                 </CardContent>
               </Card>
             )}
+          </TabsContent>
+
+          {/* 数据管理 */}
+          <TabsContent value="datasource" className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* 数据更新 */}
+              <Card className="bg-card/50 border-border/50">
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Download className="w-4 h-4 text-cyan-400" />
+                    数据更新
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="p-4 rounded-lg bg-secondary/20 border border-border/30 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">数据来源</span>
+                      <span className="text-sm font-medium">中彩网 (zhcw.com)</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">更新频率</span>
+                      <Badge variant="outline" className="text-cyan-400 border-cyan-400/30">每周一、三、五自动更新</Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">开奖日</span>
+                      <span className="text-sm font-medium">每周二、四、日</span>
+                    </div>
+                    {updateStatus.lastUpdate && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">最近更新</span>
+                        <span className="text-sm font-medium text-emerald-400">{updateStatus.lastUpdate}</span>
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    className="w-full"
+                    onClick={handleUpdateData}
+                    disabled={updateStatus.updating}
+                  >
+                    {updateStatus.updating ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                        正在获取最新数据...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4 mr-2" />
+                        立即更新数据
+                      </>
+                    )}
+                  </Button>
+                  {updateStatus.message && (
+                    <div className={`text-xs px-3 py-2 rounded-lg ${
+                      updateStatus.error
+                        ? 'bg-destructive/10 text-destructive'
+                        : 'bg-emerald-500/10 text-emerald-400'
+                    }`}>
+                      {updateStatus.message}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* 数据概况 */}
+              <Card className="bg-card/50 border-border/50">
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-amber-400" />
+                    数据概况
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="p-4 rounded-lg bg-secondary/20 border border-border/30 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">总期数</span>
+                      <span className="text-sm font-mono font-bold text-amber-400">
+                        {analysis?.recent_draws?.length || 0} 期
+                      </span>
+                    </div>
+                    {analysis?.recent_draws && analysis.recent_draws.length > 0 && (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground">最新一期</span>
+                          <Badge variant="outline" className="font-mono">
+                            {analysis.recent_draws[0].period}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground">开奖日期</span>
+                          <span className="text-sm font-medium">
+                            {analysis.recent_draws[0].draw_date}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground">最早一期</span>
+                          <Badge variant="outline" className="font-mono">
+                            {analysis.recent_draws[analysis.recent_draws.length - 1].period}
+                          </Badge>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  {analysis?.recent_draws && analysis.recent_draws.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-muted-foreground">最新开奖号码</p>
+                      <div className="flex items-center gap-1.5">
+                        {[analysis.recent_draws[0].red1, analysis.recent_draws[0].red2, analysis.recent_draws[0].red3,
+                          analysis.recent_draws[0].red4, analysis.recent_draws[0].red5, analysis.recent_draws[0].red6
+                        ].sort((a, b) => a - b).map((n, i) => (
+                          <Ball key={i} number={n} type="red" size="sm" />
+                        ))}
+                        <Ball number={analysis.recent_draws[0].blue} type="blue" size="sm" />
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* 定时任务说明 */}
+            <Card className="bg-card/50 border-border/50">
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-blue-400" />
+                  自动更新计划
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {[
+                    { day: '周一', desc: '获取周日开奖数据', icon: '1' },
+                    { day: '周三', desc: '获取周二开奖数据', icon: '3' },
+                    { day: '周五', desc: '获取周四开奖数据', icon: '5' },
+                  ].map((item) => (
+                    <div key={item.day} className="p-4 rounded-lg bg-secondary/20 border border-border/30 text-center">
+                      <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 font-bold text-sm flex items-center justify-center mx-auto mb-2">
+                        {item.icon}
+                      </div>
+                      <p className="text-sm font-medium">{item.day}</p>
+                      <p className="text-xs text-muted-foreground mt-1">{item.desc}</p>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground mt-4 text-center">
+                  系统在服务启动时自动检查并执行更新计划，也可随时点击"立即更新"手动获取最新数据
+                </p>
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </main>

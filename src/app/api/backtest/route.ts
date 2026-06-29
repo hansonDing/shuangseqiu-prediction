@@ -29,10 +29,11 @@ export async function GET(request: Request) {
     page++;
   }
 
-  if (allDraws.length < 60) {
+  if (allDraws.length < 15) {
     return NextResponse.json({ error: '历史数据不足，无法进行回测' }, { status: 400 });
   }
 
-  const result = backtest(allDraws, Math.min(sampleSize, 50));
+  const maxSample = Math.min(sampleSize, Math.floor(allDraws.length / 2));
+  const result = backtest(allDraws, maxSample);
   return NextResponse.json(result);
 }

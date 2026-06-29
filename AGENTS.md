@@ -20,22 +20,27 @@
 ├── public/                          # 静态资源
 ├── scripts/                         # 构建与启动脚本
 │   ├── build.sh / dev.sh / start.sh
-│   └── seed.ts                      # 数据库种子脚本
+│   ├── seed.ts                      # 数据库种子脚本 (模拟数据)
+│   ├── seed-real.ts                 # 真实数据种子脚本
+│   └── cron.ts                      # 定时更新任务
 ├── src/
 │   ├── app/
 │   │   ├── api/                     # API 路由
 │   │   │   ├── draws/route.ts       # 历史开奖数据
 │   │   │   ├── analysis/route.ts    # 多维度分析
 │   │   │   ├── predict/route.ts     # 智能预测
-│   │   │   └── backtest/route.ts    # 回测验证
+│   │   │   ├── backtest/route.ts    # 回测验证
+│   │   │   └── update/route.ts      # 数据更新 (POST 触发/GET 状态)
 │   │   ├── page.tsx                 # 主仪表盘页面
 │   │   ├── layout.tsx               # 根布局 (dark mode)
-│   │   └── globals.css              # 全局样式
+│   │   ├── globals.css              # 全局样式
+│   │   └── instrumentation.ts       # 服务启动时自动检查更新
 │   ├── components/
 │   │   ├── ui/                      # Shadcn UI 组件库
 │   │   └── lottery/                 # 彩票相关组件
 │   ├── lib/
 │   │   ├── lottery-engine.ts        # 分析引擎核心算法
+│   │   ├── lottery-fetcher.ts       # 数据抓取模块 (500.com)
 │   │   └── utils.ts                 # 通用工具函数
 │   └── storage/database/
 │       ├── supabase-client.ts       # Supabase 客户端
@@ -60,6 +65,15 @@
 | `/api/analysis` | GET | 获取完整分析结果 (频率/大小/奇偶/区间) |
 | `/api/predict` | GET | 生成预测组合 (支持 frequency/recency/balance 权重参数) |
 | `/api/backtest` | GET | 历史回测验证 (支持 sample 参数) |
+| `/api/update` | POST | 手动触发数据更新 (从 500.com 抓取最新开奖数据) |
+| `/api/update` | GET | 查询最近更新状态 |
+
+## 数据更新机制
+
+- **数据源**: 500.com (datachart.500.com/ssq)
+- **自动更新**: 每周一、三、五 09:00 自动执行 (通过 instrumentation.ts 启动定时任务)
+- **手动更新**: 前端"数据管理"标签页或调用 `POST /api/update`
+- **开奖日**: 双色球每周二、四、日开奖，次日抓取更新
 
 - 项目文件（如 app 目录、pages 目录、components 等）默认初始化到 `src/` 目录下。
 

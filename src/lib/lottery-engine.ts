@@ -333,7 +333,9 @@ export function predict(draws: DrawRecord[], weights?: {
 export function backtest(draws: DrawRecord[], sampleSize: number = 30): BacktestResult {
   const sorted = [...draws].sort((a, b) => a.period.localeCompare(b.period));
   const total = sorted.length;
-  const testCount = Math.min(sampleSize, total - 50);
+  // 至少需要 10 期历史作为预测基础
+  const minBase = Math.min(10, Math.floor(total / 2));
+  const testCount = Math.min(sampleSize, total - minBase);
 
   const redHitDist: Record<number, number> = {};
   for (let i = 0; i <= 6; i++) redHitDist[i] = 0;
