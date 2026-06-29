@@ -599,6 +599,23 @@ export default function LotteryDashboard() {
 
           {/* 智能预测 */}
           <TabsContent value="predict" className="space-y-6">
+            {/* 算法说明 */}
+            <Card className="bg-primary/5 border-primary/20">
+              <CardContent className="py-4">
+                <div className="flex items-start gap-3">
+                  <Zap className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+                  <div className="text-sm">
+                    <p className="font-medium text-foreground mb-1">多策略融合预测引擎 v2</p>
+                    <p className="text-muted-foreground text-xs leading-relaxed">
+                      综合4种策略生成预测：频率统计 + 近期热度(时间衰减) + 渐进遗漏回补 + 共现矩阵分析。
+                      每组号码经过6项约束过滤：奇偶比(2:4~4:2)、大小比(2:4~4:2)、区间覆盖(≥4区)、和值范围(60~150)、跨度(≥18)、连号(≤2组)。
+                      组合生成采用确定性算法，相同参数始终产生相同结果。
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
             {/* 参数调节 */}
             <Card className="bg-card/50 border-border/50">
               <CardHeader className="pb-3">
@@ -606,12 +623,13 @@ export default function LotteryDashboard() {
                   <Target className="w-4 h-4 text-primary" />
                   预测参数调节
                 </CardTitle>
+                <p className="text-xs text-muted-foreground">调节三种策略的权重比例，影响号码评分排序</p>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">频率权重</span>
+                      <span className="text-muted-foreground">频率权重 (历史出现频率)</span>
                       <span className="font-mono">{(weights.frequency * 100).toFixed(0)}%</span>
                     </div>
                     <Slider
@@ -624,7 +642,7 @@ export default function LotteryDashboard() {
                   </div>
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">近期热度权重</span>
+                      <span className="text-muted-foreground">近期热度权重 (时间衰减加权)</span>
                       <span className="font-mono">{(weights.recency * 100).toFixed(0)}%</span>
                     </div>
                     <Slider
@@ -637,7 +655,7 @@ export default function LotteryDashboard() {
                   </div>
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">平衡权重</span>
+                      <span className="text-muted-foreground">遗漏回补权重 (冷号回补概率)</span>
                       <span className="font-mono">{(weights.balance * 100).toFixed(0)}%</span>
                     </div>
                     <Slider
