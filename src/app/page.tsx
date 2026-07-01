@@ -60,6 +60,8 @@ interface BacktestResult {
   avg_blue_hits: number;
   red_hit_distribution: { hits: number; count: number }[];
   blue_hit_rate: number;
+  blue_top3_hit_rate?: number;
+  blue_first_hit_rate?: number;
   recent_tests: {
     period: string;
     predicted_reds: number[];
@@ -780,8 +782,14 @@ export default function LotteryDashboard() {
                   <StatCard
                     title="蓝球命中率"
                     value={`${backtestResult.blue_hit_rate}%`}
-                    subtitle="蓝球预测准确率"
+                    subtitle="8组推荐覆盖命中率"
                     icon={Zap}
+                  />
+                  <StatCard
+                    title="蓝球首选命中"
+                    value={`${backtestResult.blue_first_hit_rate ?? 0}%`}
+                    subtitle="第一推荐蓝球命中率"
+                    icon={Target}
                   />
                   <StatCard
                     title="最高命中"
