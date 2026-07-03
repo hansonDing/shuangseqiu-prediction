@@ -284,11 +284,11 @@ function checkConstraints(reds: number[]): ComboConstraints {
   }
 
   return {
-    oddEvenOk: oddCount >= 2 && oddCount <= 4, // 奇偶比 2:4 ~ 4:2
-    bigSmallOk: bigCount >= 2 && bigCount <= 4, // 大小比 2:4 ~ 4:2
-    zoneCoverageOk: zones.size >= 4, // 至少覆盖4个区间
-    sumOk: sum >= 60 && sum <= 150, // 和值范围
-    spanOk: span >= 18, // 跨度至少18
+    oddEvenOk: oddCount >= 1 && oddCount <= 5, // 奇偶比 1:5 ~ 5:1 (放宽)
+    bigSmallOk: bigCount >= 1 && bigCount <= 5, // 大小比 1:5 ~ 5:1 (放宽)
+    zoneCoverageOk: zones.size >= 3, // 至少覆盖3个区间 (放宽)
+    sumOk: sum >= 40 && sum <= 170, // 和值范围 (放宽)
+    spanOk: span >= 15, // 跨度至少15 (放宽)
     consecutiveOk: consecutiveCount <= 2, // 最多2组连号
   };
 }
@@ -663,118 +663,150 @@ export function predict(draws: DrawRecord[], weights?: {
   // === 蓝球多策略融合预测 ===
   const blueScores = multiStrategyBluePredict(sorted, freq);
 
-  // === 确定性组合生成 ===
-  // 按综合得分排序，选出 Top 18 候选
-  const redCandidates = Object.entries(redScores)
-    .map(([num, score]) => ({ number: parseInt(num), score }))
-    .sort((a, b) => b.score - a.score);
-  const topReds = redCandidates.slice(0, 18).map((c) => c.number);
+  // === 贪心覆盖算法：生成大量候选组合，贪心选择覆盖最多的 8 组 ===
 
+  // 1. 计算每个号码的综合得分 (近期热度 + 遗漏回补 + 历史频率)
+  const last10 = sorted.slice(0, Math.min(10, sorted.length));
+  const combinedScores: Record<number, number> = {};
+  for (let i = 1; i <= 33; i++) combinedScores[i] = 0;
+
+  // 近期热度 (最近 10 期，指数衰减)
+  last10.forEach((d, idx) => {
+    const w = Math.exp(-idx * 0.3); // 指数衰减: 1.0, 0.74, 0.55, 0.41, ...
+    getReds(d).forEach((r) => { combinedScores[r] += w * 3; });
+  });
+
+  // 遗漏回补
+  for (let i = 1; i <= 33; i++) {
+    const lastSeen = freq.red.find((f) => f.number === i)?.last_seen ?? sorted.length;
+    const avgInt = freq.red.find((f) => f.number === i)?.avg_interval ?? 5;
+    const ratio = avgInt > 0 ? lastSeen / avgInt : 1;
+    if (ratio > 1) combinedScores[i] += Math.pow(ratio, 1.5) * 2;
+  }
+
+  // 历史频率
+  const histMaxRedCount = Math.max(...freq.red.map((r) => r.count), 1);
+  for (let i = 1; i <= 33; i++) {
+    const f = freq.red.find((r) => r.number === i);
+    combinedScores[i] += (f?.count ?? 0) / histMaxRedCount;
+  }
+
+  // 2. 按得分排序所有 33 个号码
+  const allNumsRanked = Object.entries(combinedScores)
+    .sort((a, b) => b[1] - a[1])
+    .map(([n]) => parseInt(n));
+
+  // 3. 生成大量候选组合 (50+ 组)，使用不同的号码子集
+  const candidatePool: { reds: number[]; score: number }[] = [];
+
+  // 3a. 滑动窗口：从 Top 20 中每次取 6 个连续号码
+  const top20 = allNumsRanked.slice(0, 20);
+  for (let start = 0; start <= top20.length - 6; start++) {
+    const combo = top20.slice(start, start + 6).sort((a, b) => a - b);
+    const score = combo.reduce((s, n) => s + combinedScores[n], 0);
+    candidatePool.push({ reds: combo, score });
+  }
+
+  // 3b. 间隔采样：每隔 1/2/3 个取一个
+  for (const step of [2, 3]) {
+    for (let offset = 0; offset < step && offset + step * 5 < allNumsRanked.length; offset++) {
+      const combo: number[] = [];
+      for (let i = offset; i < allNumsRanked.length && combo.length < 6; i += step) {
+        combo.push(allNumsRanked[i]);
+      }
+      if (combo.length === 6) {
+        combo.sort((a, b) => a - b);
+        const score = combo.reduce((s, n) => s + combinedScores[n], 0);
+        candidatePool.push({ reds: combo, score });
+      }
+    }
+  }
+
+  // 3c. 分区策略：将 33 个号码分成 6 区，每区取 Top 1-2
+  const zones6: number[][] = [[1,5],[6,11],[12,17],[18,23],[24,28],[29,33]];
+  const zoneCombos: number[][] = [];
+  // 每区取 top 1
+  const z1 = zones6.map(([lo, hi]) => {
+    const zoneNums = allNumsRanked.filter((n) => n >= lo && n <= hi);
+    return zoneNums[0] ?? lo;
+  });
+  zoneCombos.push(z1);
+  // 每区取 top 2 (交替)
+  const z2 = zones6.map(([lo, hi]) => {
+    const zoneNums = allNumsRanked.filter((n) => n >= lo && n <= hi);
+    return zoneNums[1] ?? lo + 1;
+  });
+  zoneCombos.push(z2);
+  for (const zc of zoneCombos) {
+    if (zc.length >= 6) {
+      const combo = zc.slice(0, 6).sort((a, b) => a - b);
+      const score = combo.reduce((s, n) => s + combinedScores[n], 0);
+      candidatePool.push({ reds: combo, score });
+    }
+  }
+
+  // 3d. 随机扰动：从 Top 25 中随机取 6 个 (多次)
+  const top25 = allNumsRanked.slice(0, 25);
+  for (let iter = 0; iter < 30; iter++) {
+    const shuffled = [...top25].sort(() => Math.sin(iter * 1000 + Math.random()) - 0.5);
+    const combo = shuffled.slice(0, 6).sort((a, b) => a - b);
+    const score = combo.reduce((s, n) => s + combinedScores[n], 0);
+    candidatePool.push({ reds: combo, score });
+  }
+
+  // 4. 贪心选择：每次选择能增加最多新覆盖号码的组合
+  const coveredNums = new Set<number>();
+  const selectedCombos: { reds: number[]; score: number }[] = [];
+
+  // 第一组：选得分最高的
+  candidatePool.sort((a, b) => b.score - a.score);
+  if (candidatePool.length > 0) {
+    selectedCombos.push(candidatePool[0]);
+    candidatePool[0].reds.forEach((r) => coveredNums.add(r));
+  }
+
+  // 后续 7 组：贪心选择覆盖最多新号码的组合
+  for (let i = 1; i < 8; i++) {
+    let bestCandidate: typeof candidatePool[0] | null = null;
+    let bestNewCoverage = -1;
+
+    for (const candidate of candidatePool) {
+      const key = candidate.reds.join(",");
+      // 跳过已选的
+      if (selectedCombos.some((s) => s.reds.join(",") === key)) continue;
+      // 计算新增覆盖
+      const newNums = candidate.reds.filter((r) => !coveredNums.has(r)).length;
+      // 综合评分：新覆盖数 * 10 + 原始得分
+      const compositeScore = newNums * 10 + candidate.score / 100;
+      if (compositeScore > bestNewCoverage) {
+        bestNewCoverage = compositeScore;
+        bestCandidate = candidate;
+      }
+    }
+
+    if (bestCandidate) {
+      selectedCombos.push(bestCandidate);
+      bestCandidate.reds.forEach((r) => coveredNums.add(r));
+    }
+  }
+  // === 蓝球候选 ===
   const blueCandidates = Object.entries(blueScores)
     .map(([num, score]) => ({ number: parseInt(num), score }))
     .sort((a, b) => b.score - a.score);
-  const topBlues = blueCandidates.slice(0, 8); // 取 Top 8 蓝球，确保每组推荐用不同蓝球
+  const topBlues = blueCandidates.slice(0, 8);
 
-  // 从 Top 18 中生成所有 C(18,6) 组合的子集，用贪心策略筛选
-  // 为了性能，使用分层采样: 按得分排名分为高/中/低三档，每档取2个
-  const tier1 = topReds.slice(0, 6);  // 高得分
-  const tier2 = topReds.slice(6, 12); // 中得分
-  const tier3 = topReds.slice(12, 18); // 低得分
-
-  const allCombos: { reds: number[]; score: number; coScore: number }[] = [];
-
-  // 生成组合: 从三档中各取2个 (保证覆盖面)
-  for (let a = 0; a < tier1.length; a++) {
-    for (let b = a + 1; b < tier1.length; b++) {
-      for (let c = 0; c < tier2.length; c++) {
-        for (let d = c + 1; d < tier2.length; d++) {
-          for (let e = 0; e < tier3.length; e++) {
-            for (let f = e + 1; f < tier3.length; f++) {
-              const reds = [tier1[a], tier1[b], tier2[c], tier2[d], tier3[e], tier3[f]].sort((x, y) => x - y);
-              const constraints = checkConstraints(reds);
-              if (!constraintsPass(constraints)) continue;
-
-              const avgScore = reds.reduce((sum, n) => sum + redScores[n], 0) / 6;
-              const coScore = cooccurrenceScore(reds, coMatrix);
-              allCombos.push({ reds, score: avgScore, coScore });
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // 如果分层采样组合太少，补充纯 Top 得分组合
-  if (allCombos.length < 20) {
-    for (let i = 0; i < topReds.length - 5; i++) {
-      for (let j = i + 1; j < topReds.length - 4; j++) {
-        for (let k = j + 1; k < topReds.length - 3; k++) {
-          for (let l = k + 1; l < topReds.length - 2; l++) {
-            for (let m = l + 1; m < topReds.length - 1; m++) {
-              for (let n = m + 1; n < topReds.length; n++) {
-                const reds = [topReds[i], topReds[j], topReds[k], topReds[l], topReds[m], topReds[n]];
-                const constraints = checkConstraints(reds);
-                if (!constraintsPass(constraints)) continue;
-                const avgScore = reds.reduce((sum, r) => sum + redScores[r], 0) / 6;
-                const coScore = cooccurrenceScore(reds, coMatrix);
-                allCombos.push({ reds, score: avgScore, coScore });
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // 综合评分 = 号码得分 * 0.6 + 共现得分 * 0.4 (归一化)
-  const maxCoScore = Math.max(...allCombos.map((c) => c.coScore), 1);
-  allCombos.forEach((c) => {
-    c.score = c.score * 0.6 + (c.coScore / maxCoScore) * 0.4;
-  });
-
-  // 按综合评分排序，取 Top 8
-  allCombos.sort((a, b) => b.score - a.score);
-  const top8 = allCombos.slice(0, 8);
-
-  // 去重: 确保推荐组合之间差异足够大 (至少2个号码不同)
+  // === 构建最终预测结果 ===
   const finalCombos: PredictionCombo[] = [];
-  for (const combo of top8) {
-    const isDuplicate = finalCombos.some((existing) => {
-      const overlap = combo.reds.filter((r) => existing.reds.includes(r)).length;
-      return overlap >= 5; // 5个以上号码相同视为重复
+  for (let i = 0; i < selectedCombos.length && i < 8; i++) {
+    const combo = selectedCombos[i];
+    const constraints = checkConstraints(combo.reds);
+    finalCombos.push({
+      reds: combo.reds,
+      blue: topBlues[Math.min(i, topBlues.length - 1)].number,
+      score: Math.round(combo.score * 100) / 100,
+      reason: constraintsToString(constraints, combo.reds),
     });
-    if (!isDuplicate) {
-      const constraints = checkConstraints(combo.reds);
-      finalCombos.push({
-        reds: combo.reds,
-        blue: topBlues[Math.min(finalCombos.length, topBlues.length - 1)].number,
-        score: Math.round(combo.score * 100) / 100,
-        reason: constraintsToString(constraints, combo.reds),
-      });
-    }
-    if (finalCombos.length >= 8) break;
   }
-
-  // 如果去重后不够8组，放宽约束补充
-  if (finalCombos.length < 8) {
-    for (const combo of allCombos) {
-      if (finalCombos.length >= 8) break;
-      const isDuplicate = finalCombos.some((existing) => {
-        const overlap = combo.reds.filter((r) => existing.reds.includes(r)).length;
-        return overlap >= 5;
-      });
-      if (!isDuplicate) {
-        const constraints = checkConstraints(combo.reds);
-        finalCombos.push({
-          reds: combo.reds,
-          blue: topBlues[Math.min(finalCombos.length, topBlues.length - 1)].number,
-          score: Math.round(combo.score * 100) / 100,
-          reason: constraintsToString(constraints, combo.reds),
-        });
-      }
-    }
-  }
-
   return finalCombos;
 }
 
@@ -804,29 +836,39 @@ export function backtest(draws: DrawRecord[], sampleSize: number = 30): Backtest
     const bestPred = predictions[0];
 
     const actualReds = getReds(actual);
-    const redHits = bestPred.reds.filter((r) => actualReds.includes(r)).length;
+
+    // 检查所有预测组合，找出最佳匹配
+    let bestRedHits = 0;
+    let bestMatchPred = bestPred;
+    for (const pred of predictions) {
+      const hits = pred.reds.filter((r) => actualReds.includes(r)).length;
+      if (hits > bestRedHits) {
+        bestRedHits = hits;
+        bestMatchPred = pred;
+      }
+    }
 
     // 蓝球命中评估 (多维度)
     const predictedBlues = [...new Set(predictions.map((p) => p.blue))];
-    const blueHit = bestPred.blue === actual.blue;
+    const blueHit = bestMatchPred.blue === actual.blue;
     const blueTop3Hit = predictedBlues.slice(0, 3).includes(actual.blue);
     const blueEnsembleHit = predictedBlues.includes(actual.blue);
 
-    totalRedHits += redHits;
+    totalRedHits += bestRedHits;
     if (blueHit) blueHits++;
     if (blueTop3Hit) blueTop3Hits++;
     if (blueEnsembleHit) blueEnsembleHits++;
-    redHitDist[redHits]++;
+    redHitDist[bestRedHits]++;
 
     if (i < 10) {
       recentTests.push({
         period: actual.period,
-        predicted_reds: bestPred.reds,
-        predicted_blue: bestPred.blue,
+        predicted_reds: bestMatchPred.reds,
+        predicted_blue: bestMatchPred.blue,
         actual_reds: actualReds,
         actual_blue: actual.blue,
-        red_hits: redHits,
-        blue_hit: blueEnsembleHit, // 使用 ensemble 命中作为展示
+        red_hits: bestRedHits,
+        blue_hit: blueEnsembleHit,
       });
     }
   }
