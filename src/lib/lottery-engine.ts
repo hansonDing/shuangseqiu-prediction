@@ -518,90 +518,265 @@ function blueStrategyF(sorted: DrawRecord[]): Record<number, number> {
   return scores;
 }
 
-// 多策略融合: 自动回测选出最优权重
+// 蓝球策略G: 大小动量 (小号→小号概率高)
+function blueStrategyG(sorted: DrawRecord[]): Record<number, number> {
+  const scores: Record<number, number> = {};
+  const lastBlue = sorted[sorted.length - 1].blue;
+  const isLastSmall = lastBlue <= 8;
+
+  // 统计大小转换概率
+  let smallToSmall = 0, smallToBig = 0, bigToSmall = 0, bigToBig = 0;
+  for (let i = 1; i < sorted.length; i++) {
+    const prevSmall = sorted[i - 1].blue <= 8;
+    const currSmall = sorted[i].blue <= 8;
+    if (prevSmall && currSmall) smallToSmall++;
+    else if (prevSmall && !currSmall) smallToBig++;
+    else if (!prevSmall && currSmall) bigToSmall++;
+    else bigToBig++;
+  }
+
+  // 根据上期大小和转换概率给分
+  for (let i = 1; i <= 16; i++) {
+    const isSmall = i <= 8;
+    if (isLastSmall) {
+      scores[i] = isSmall ? (smallToSmall + 1) / (smallToSmall + smallToBig + 2) : (smallToBig + 1) / (smallToSmall + smallToBig + 2);
+    } else {
+      scores[i] = isSmall ? (bigToSmall + 1) / (bigToSmall + bigToBig + 2) : (bigToBig + 1) / (bigToSmall + bigToBig + 2);
+    }
+  }
+  return scores;
+}
+
+// 蓝球策略H: 最近5期最高频蓝球
+function blueStrategyH(sorted: DrawRecord[]): Record<number, number> {
+  const scores: Record<number, number> = {};
+  const recent = sorted.slice(-5);
+  const recentBlues = recent.map(d => d.blue);
+
+  for (let i = 1; i <= 16; i++) {
+    const count = recentBlues.filter(b => b === i).length;
+    // 最近5期出现过的蓝球给高分，未出现的给基础分
+    scores[i] = count > 0 ? 0.5 + count * 0.3 : 0.1;
+  }
+  return scores;
+}
+
+// 蓝球策略J: 时间衰减频率 (最近一期权重最高，指数衰减)
+function blueStrategyJ(sorted: DrawRecord[]): Record<number, number> {
+  const scores: Record<number, number> = {};
+  for (let i = 1; i <= 16; i++) scores[i] = 0;
+
+  const window = Math.min(20, sorted.length);
+  const recent = sorted.slice(-window);
+
+  for (let i = 0; i < recent.length; i++) {
+    const blue = recent[i].blue;
+    // 越近的期数权重越高: 最后一期权重=1, 倒数第二期=0.85, 倒数第三期=0.72...
+    const recency = i / (recent.length - 1); // 0=最远, 1=最近
+    const weight = Math.pow(recency, 1.5); // 指数衰减
+    scores[blue] += weight;
+  }
+
+  // 归一化
+  const maxScore = Math.max(...Object.values(scores)) || 1;
+  for (let i = 1; i <= 16; i++) {
+    scores[i] = scores[i] / maxScore;
+  }
+
+  return scores;
+}
+
+// 蓝球策略K: "到期"号码 + 反重复 (长期未出现的号码更可能出现，刚出现的号码不太可能立即重复)
+function blueStrategyK(sorted: DrawRecord[]): Record<number, number> {
+  const scores: Record<number, number> = {};
+  const lastBlue = sorted[sorted.length - 1].blue;
+
+  // 计算每个蓝球距离上次出现的期数 (gap)
+  const lastSeen: Record<number, number> = {};
+  for (let i = 1; i <= 16; i++) lastSeen[i] = sorted.length; // 从未出现 = 最大 gap
+
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const blue = sorted[i].blue;
+    if (lastSeen[blue] === sorted.length) {
+      lastSeen[blue] = sorted.length - 1 - i; // 距离最近一次出现的期数
+    }
+  }
+
+  // 计算平均 gap
+  const avgGap = sorted.length / 16; // 理论上每个号码平均 16 期出现一次
+
+  for (let i = 1; i <= 16; i++) {
+    const gap = lastSeen[i];
+    // gap 越大 = 越久没出现 = 越"到期"
+    scores[i] = Math.min(gap / avgGap, 3.0); // 最高 3 倍权重
+
+    // 反重复: 上期刚出现的号码降低分数
+    if (i === lastBlue) {
+      scores[i] *= 0.3; // 刚出现的号码不太可能立即重复
+    }
+  }
+
+  return scores;
+}
+
+// 蓝球策略L: 共识预测 (转移矩阵 × 到期因子 × 近期频率)
+function blueStrategyL(sorted: DrawRecord[]): Record<number, number> {
+  const scores: Record<number, number> = {};
+  const total = sorted.length;
+  const lastBlue = sorted[total - 1].blue;
+  const allBlues = sorted.map(d => d.blue);
+
+  // 1. 转移矩阵: 上期蓝球 → 下期蓝球的概率
+  const transCount: Record<number, number> = {};
+  for (let i = 1; i <= 16; i++) transCount[i] = 0;
+  for (let i = 0; i < allBlues.length - 1; i++) {
+    if (allBlues[i] === lastBlue) {
+      transCount[allBlues[i + 1]]++;
+    }
+  }
+  const transTotal = Object.values(transCount).reduce((s, c) => s + c, 0) || 1;
+
+  // 2. 到期因子: 距离上次出现的期数
+  const lastSeen: Record<number, number> = {};
+  for (let i = 1; i <= 16; i++) lastSeen[i] = total;
+  for (let i = total - 1; i >= 0; i--) {
+    if (lastSeen[sorted[i].blue] === total) {
+      lastSeen[sorted[i].blue] = total - 1 - i;
+    }
+  }
+
+  // 3. 近期频率: 最近 15 期
+  const recentWindow = Math.min(15, total);
+  const recentFreq: Record<number, number> = {};
+  for (let i = 1; i <= 16; i++) recentFreq[i] = 0;
+  for (let i = total - recentWindow; i < total; i++) {
+    recentFreq[sorted[i].blue]++;
+  }
+
+  // 组合三个因子
+  for (let i = 1; i <= 16; i++) {
+    const transProb = (transCount[i] + 0.5) / (transTotal + 8); // 平滑
+    const dueFactor = Math.min(lastSeen[i] / 7, 3.0); // 到期因子 (7期平均)
+    const recentScore = recentFreq[i] / recentWindow;
+
+    // 转移概率 × 到期因子 × (1 + 近期频率)
+    scores[i] = transProb * dueFactor * (1 + recentScore);
+
+    // 反重复: 上期刚出现的号码降权
+    if (i === lastBlue) {
+      scores[i] *= 0.3;
+    }
+  }
+
+  return scores;
+}
+
+// 蓝球策略I: 模式匹配 (最近3期蓝球序列 → 历史相似序列 → 预测下一个)
+function blueStrategyI(sorted: DrawRecord[]): Record<number, number> {
+  const scores: Record<number, number> = {};
+  for (let i = 1; i <= 16; i++) scores[i] = 0.01;
+
+  if (sorted.length < 10) return scores;
+
+  const last3 = sorted.slice(-3).map(d => d.blue);
+  const allBlues = sorted.map(d => d.blue);
+
+  // 在历史中搜索与最近3期序列相似的模式
+  // 精确匹配3期序列
+  for (let i = 0; i < allBlues.length - 4; i++) {
+    if (allBlues[i] === last3[0] && allBlues[i + 1] === last3[1] && allBlues[i + 2] === last3[2]) {
+      const nextBlue = allBlues[i + 3];
+      scores[nextBlue] += 2.0;
+    }
+  }
+
+  // 模糊匹配: 匹配最近2期序列
+  const last2 = sorted.slice(-2).map(d => d.blue);
+  for (let i = 0; i < allBlues.length - 3; i++) {
+    if (allBlues[i] === last2[0] && allBlues[i + 1] === last2[1]) {
+      const nextBlue = allBlues[i + 2];
+      scores[nextBlue] += 1.0;
+    }
+  }
+
+  // 模糊匹配: 匹配最近1期 (转移矩阵)
+  const last1 = sorted[sorted.length - 1].blue;
+  for (let i = 0; i < allBlues.length - 2; i++) {
+    if (allBlues[i] === last1) {
+      const nextBlue = allBlues[i + 1];
+      scores[nextBlue] += 0.5;
+    }
+  }
+
+  // 大小模式匹配: 最近3期的大小模式
+  const last3Size = last3.map(b => b <= 8 ? 'S' : 'B');
+  for (let i = 0; i < allBlues.length - 4; i++) {
+    const histSize = [allBlues[i], allBlues[i + 1], allBlues[i + 2]].map(b => b <= 8 ? 'S' : 'B');
+    if (histSize[0] === last3Size[0] && histSize[1] === last3Size[1] && histSize[2] === last3Size[2]) {
+      const nextBlue = allBlues[i + 3];
+      scores[nextBlue] += 0.8;
+    }
+  }
+
+  return scores;
+}
+
+// 蓝球专用预测: 多策略投票共识
 function multiStrategyBluePredict(
   sorted: DrawRecord[],
   freq: AnalysisResult['frequency']
 ): Record<number, number> {
   const total = sorted.length;
 
-  // 如果数据太少，只用策略A
   if (total < 10) {
     return blueStrategyA(sorted, freq);
   }
 
-  // 自动回测: 用最近的数据测试各策略的命中率
-  const testSize = Math.min(10, Math.floor(total / 3));
-  const strategyHits: Record<string, number> = {
-    A: 0, B: 0, C: 0, D: 0, E: 0, F: 0,
-  };
-
-  for (let t = total - testSize; t < total; t++) {
-    const history = sorted.slice(0, t);
-    const actual = sorted[t].blue;
-    const histFreq = analyzeFrequency(history);
-
-    const sA = blueStrategyA(history, histFreq);
-    const sB = blueStrategyB(history);
-    const sC = blueStrategyC(history);
-    const sD = blueStrategyD(history);
-    const sE = blueStrategyE(history);
-    const sF = blueStrategyF(history);
-
-    // 每个策略取 Top 3 候选
-    const getTop3 = (s: Record<number, number>): number[] =>
-      Object.entries(s)
-        .map(([n, sc]) => ({ num: parseInt(n), score: sc }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 3)
-        .map((x) => x.num);
-
-    const topA = getTop3(sA);
-    const topB = getTop3(sB);
-    const topC = getTop3(sC);
-    const topD = getTop3(sD);
-    const topE = getTop3(sE);
-    const topF = getTop3(sF);
-
-    if (topA.includes(actual)) strategyHits.A++;
-    if (topB.includes(actual)) strategyHits.B++;
-    if (topC.includes(actual)) strategyHits.C++;
-    if (topD.includes(actual)) strategyHits.D++;
-    if (topE.includes(actual)) strategyHits.E++;
-    if (topF.includes(actual)) strategyHits.F++;
-  }
-
-  // 根据回测结果动态分配权重
-  const totalHits = Object.values(strategyHits).reduce((s, h) => s + h, 0) || 1;
-  const strategyWeights: Record<string, number> = {};
-  for (const [key, hits] of Object.entries(strategyHits)) {
-    // 基础权重 0.1 + 回测命中率加权
-    strategyWeights[key] = 0.1 + (hits / totalHits) * 0.9;
-  }
-
-  // 归一化权重
-  const wSum = Object.values(strategyWeights).reduce((s, w) => s + w, 0);
-  for (const key of Object.keys(strategyWeights)) {
-    strategyWeights[key] /= wSum;
-  }
-
-  // 融合所有策略
+  // 运行所有策略
   const sA = blueStrategyA(sorted, freq);
   const sB = blueStrategyB(sorted);
   const sC = blueStrategyC(sorted);
   const sD = blueStrategyD(sorted);
   const sE = blueStrategyE(sorted);
   const sF = blueStrategyF(sorted);
+  const sI = blueStrategyI(sorted);
 
+  const allStrats = { A: sA, B: sB, C: sC, D: sD, E: sE, F: sF, I: sI };
+
+  // 每个策略投票: Top 1 得 3 分, Top 2 得 2 分, Top 3 得 1 分
+  const votes: Record<number, number> = {};
+  for (let i = 1; i <= 16; i++) votes[i] = 0;
+
+  for (const strat of Object.values(allStrats)) {
+    const ranked = Object.entries(strat)
+      .map(([num, score]) => ({ num: parseInt(num), score }))
+      .sort((a, b) => b.score - a.score);
+
+    if (ranked.length >= 1) votes[ranked[0].num] += 3;
+    if (ranked.length >= 2) votes[ranked[1].num] += 2;
+    if (ranked.length >= 3) votes[ranked[2].num] += 1;
+  }
+
+  // 加入大小趋势加权
+  const recentWindow = Math.min(10, total);
+  const recentBlues = sorted.slice(-recentWindow).map(d => d.blue);
+  const recentSmallCount = recentBlues.filter(b => b <= 8).length;
+  const smallRatio = recentSmallCount / recentWindow;
+
+  if (smallRatio >= 0.6) {
+    for (let i = 1; i <= 8; i++) votes[i] += Math.round(smallRatio * 5);
+  } else if (smallRatio <= 0.4) {
+    for (let i = 9; i <= 16; i++) votes[i] += Math.round((1 - smallRatio) * 5);
+  }
+
+  // 反重复: 最近 1 期号码降权
+  const lastBlue = sorted[total - 1].blue;
+  votes[lastBlue] = Math.max(0, votes[lastBlue] - 3);
+
+  // 转换为分数
   const finalScores: Record<number, number> = {};
   for (let i = 1; i <= 16; i++) {
-    finalScores[i] =
-      sA[i] * strategyWeights.A +
-      sB[i] * strategyWeights.B +
-      sC[i] * strategyWeights.C +
-      sD[i] * strategyWeights.D +
-      sE[i] * strategyWeights.E +
-      sF[i] * strategyWeights.F;
+    finalScores[i] = votes[i] + 0.01;
   }
 
   return finalScores;
@@ -850,7 +1025,8 @@ export function backtest(draws: DrawRecord[], sampleSize: number = 30): Backtest
 
     // 蓝球命中评估 (多维度)
     const predictedBlues = [...new Set(predictions.map((p) => p.blue))];
-    const blueHit = bestMatchPred.blue === actual.blue;
+    // 首选蓝球: 第一组预测的蓝球 (而非最佳红球匹配的蓝球)
+    const blueHit = predictions[0].blue === actual.blue;
     const blueTop3Hit = predictedBlues.slice(0, 3).includes(actual.blue);
     const blueEnsembleHit = predictedBlues.includes(actual.blue);
 
@@ -864,11 +1040,11 @@ export function backtest(draws: DrawRecord[], sampleSize: number = 30): Backtest
       recentTests.push({
         period: actual.period,
         predicted_reds: bestMatchPred.reds,
-        predicted_blue: bestMatchPred.blue,
+        predicted_blue: predictions[0].blue,
         actual_reds: actualReds,
         actual_blue: actual.blue,
         red_hits: bestRedHits,
-        blue_hit: blueEnsembleHit,
+        blue_hit: blueHit,
       });
     }
   }
