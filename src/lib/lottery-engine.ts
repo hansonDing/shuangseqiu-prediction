@@ -838,7 +838,7 @@ export function predict(draws: DrawRecord[], weights?: {
   // === 蓝球多策略融合预测 ===
   const blueScores = multiStrategyBluePredict(sorted, freq);
 
-  // === 贪心覆盖算法：生成大量候选组合，贪心选择覆盖最多的 8 组 ===
+  // === 贪心覆盖算法 ===
 
   // 1. 计算每个号码的综合得分 (近期热度 + 遗漏回补 + 历史频率)
   const last10 = sorted.slice(0, Math.min(10, sorted.length));
@@ -847,8 +847,8 @@ export function predict(draws: DrawRecord[], weights?: {
 
   // 近期热度 (最近 10 期，指数衰减)
   last10.forEach((d, idx) => {
-    const w = Math.exp(-idx * 0.3); // 指数衰减: 1.0, 0.74, 0.55, 0.41, ...
-    getReds(d).forEach((r) => { combinedScores[r] += w * 3; });
+    const heatW = Math.exp(-idx * 0.3);
+    getReds(d).forEach((r) => { combinedScores[r] += heatW * 3; });
   });
 
   // 遗漏回补
@@ -866,20 +866,49 @@ export function predict(draws: DrawRecord[], weights?: {
     combinedScores[i] += (f?.count ?? 0) / histMaxRedCount;
   }
 
+  // 转移矩阵加分：基于上一期号码，统计历史上"下一期"常出现的号码
+  if (sorted.length >= 2) {
+    const lastDraw = sorted[sorted.length - 1];
+    const lastReds = getReds(lastDraw);
+    const transitionCounts: Record<number, number> = {};
+    for (let i = 1; i <= 33; i++) transitionCounts[i] = 0;
+
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const currReds = getReds(sorted[i]);
+      const nextReds = getReds(sorted[i + 1]);
+      // 如果当前期与上一期有重叠号码，则下一期的号码获得加分
+      if (currReds.some((r) => lastReds.includes(r))) {
+        nextReds.forEach((r) => { transitionCounts[r] += 1; });
+      }
+    }
+    const maxTrans = Math.max(...Object.values(transitionCounts), 1);
+    for (let i = 1; i <= 33; i++) {
+      combinedScores[i] += (transitionCounts[i] / maxTrans) * 1.5;
+    }
+  }
+
   // 2. 按得分排序所有 33 个号码
   const allNumsRanked = Object.entries(combinedScores)
     .sort((a, b) => b[1] - a[1])
     .map(([n]) => parseInt(n));
 
-  // 3. 生成大量候选组合 (50+ 组)，使用不同的号码子集
+  // 3. 生成大量候选组合
   const candidatePool: { reds: number[]; score: number }[] = [];
+
+  // 组合评分函数：个体得分 + 共现加分 + Top18覆盖加分
+  const top18Set = new Set(allNumsRanked.slice(0, 18));
+  function comboScore(reds: number[]): number {
+    const baseScore = reds.reduce((s, n) => s + combinedScores[n], 0);
+    const coScore = cooccurrenceScore(reds, coMatrix);
+    const top18Count = reds.filter((r) => top18Set.has(r)).length;
+    return baseScore + coScore * 0.8 + top18Count * 0.5;
+  }
 
   // 3a. 滑动窗口：从 Top 20 中每次取 6 个连续号码
   const top20 = allNumsRanked.slice(0, 20);
   for (let start = 0; start <= top20.length - 6; start++) {
     const combo = top20.slice(start, start + 6).sort((a, b) => a - b);
-    const score = combo.reduce((s, n) => s + combinedScores[n], 0);
-    candidatePool.push({ reds: combo, score });
+    candidatePool.push({ reds: combo, score: comboScore(combo) });
   }
 
   // 3b. 间隔采样：每隔 1/2/3 个取一个
@@ -891,8 +920,7 @@ export function predict(draws: DrawRecord[], weights?: {
       }
       if (combo.length === 6) {
         combo.sort((a, b) => a - b);
-        const score = combo.reduce((s, n) => s + combinedScores[n], 0);
-        candidatePool.push({ reds: combo, score });
+        candidatePool.push({ reds: combo, score: comboScore(combo) });
       }
     }
   }
@@ -900,13 +928,11 @@ export function predict(draws: DrawRecord[], weights?: {
   // 3c. 分区策略：将 33 个号码分成 6 区，每区取 Top 1-2
   const zones6: number[][] = [[1,5],[6,11],[12,17],[18,23],[24,28],[29,33]];
   const zoneCombos: number[][] = [];
-  // 每区取 top 1
   const z1 = zones6.map(([lo, hi]) => {
     const zoneNums = allNumsRanked.filter((n) => n >= lo && n <= hi);
     return zoneNums[0] ?? lo;
   });
   zoneCombos.push(z1);
-  // 每区取 top 2 (交替)
   const z2 = zones6.map(([lo, hi]) => {
     const zoneNums = allNumsRanked.filter((n) => n >= lo && n <= hi);
     return zoneNums[1] ?? lo + 1;
@@ -915,44 +941,98 @@ export function predict(draws: DrawRecord[], weights?: {
   for (const zc of zoneCombos) {
     if (zc.length >= 6) {
       const combo = zc.slice(0, 6).sort((a, b) => a - b);
-      const score = combo.reduce((s, n) => s + combinedScores[n], 0);
-      candidatePool.push({ reds: combo, score });
+      candidatePool.push({ reds: combo, score: comboScore(combo) });
     }
+  }
+
+  // 3c2. 三区均衡策略 (2/2/2 分布占 69%)
+  const zoneA = allNumsRanked.filter((n) => n <= 11);  // 1-11
+  const zoneB = allNumsRanked.filter((n) => n >= 12 && n <= 22); // 12-22
+  const zoneC = allNumsRanked.filter((n) => n >= 23);  // 23-33
+  // 每区取 top 2
+  if (zoneA.length >= 2 && zoneB.length >= 2 && zoneC.length >= 2) {
+    const combo222 = [...zoneA.slice(0, 2), ...zoneB.slice(0, 2), ...zoneC.slice(0, 2)].sort((a, b) => a - b);
+    candidatePool.push({ reds: combo222, score: comboScore(combo222) });
+  }
+  // 每区取 top 1 和 top 3
+  if (zoneA.length >= 3 && zoneB.length >= 3 && zoneC.length >= 3) {
+    const combo13 = [zoneA[0], zoneA[2], zoneB[0], zoneB[2], zoneC[0], zoneC[2]].sort((a, b) => a - b);
+    candidatePool.push({ reds: combo13, score: comboScore(combo13) });
+  }
+  // 每区取 top 1 和 top 4
+  if (zoneA.length >= 4 && zoneB.length >= 4 && zoneC.length >= 4) {
+    const combo14 = [zoneA[0], zoneA[3], zoneB[0], zoneB[3], zoneC[0], zoneC[3]].sort((a, b) => a - b);
+    candidatePool.push({ reds: combo14, score: comboScore(combo14) });
   }
 
   // 3d. 随机扰动：从 Top 25 中随机取 6 个 (多次)
   const top25 = allNumsRanked.slice(0, 25);
-  for (let iter = 0; iter < 30; iter++) {
+  for (let iter = 0; iter < 60; iter++) {
     const shuffled = [...top25].sort(() => Math.sin(iter * 1000 + Math.random()) - 0.5);
     const combo = shuffled.slice(0, 6).sort((a, b) => a - b);
-    const score = combo.reduce((s, n) => s + combinedScores[n], 0);
-    candidatePool.push({ reds: combo, score });
+    candidatePool.push({ reds: combo, score: comboScore(combo) });
   }
 
-  // 4. 贪心选择：每次选择能增加最多新覆盖号码的组合
+  // 3e. 跨区间隔组合：从每个区间各取 2 个最高分号码 (扩展版)
+  const zoneCandidates: number[][] = [[], [], []];
+  for (let n = 1; n <= 33; n++) {
+    const z = n <= 11 ? 0 : n <= 22 ? 1 : 2;
+    zoneCandidates[z].push(n);
+  }
+  for (let z = 0; z < 3; z++) {
+    zoneCandidates[z].sort((a, b) => combinedScores[b] - combinedScores[a]);
+  }
+  // 从每个区间取 Top 7，生成所有 C(7,2) = 21 种 2 选组合
+  const zonePairs: number[][][] = [[], [], []];
+  for (let z = 0; z < 3; z++) {
+    const top7 = zoneCandidates[z].slice(0, 7);
+    for (let i = 0; i < top7.length; i++) {
+      for (let j = i + 1; j < top7.length; j++) {
+        zonePairs[z].push([top7[i], top7[j]]);
+      }
+    }
+  }
+  // 组合：从每个区间各选一对
+  for (const p0 of zonePairs[0]) {
+    for (const p1 of zonePairs[1]) {
+      for (const p2 of zonePairs[2]) {
+        const combo = [...p0, ...p1, ...p2].sort((a, b) => a - b);
+        candidatePool.push({ reds: combo, score: comboScore(combo) });
+      }
+    }
+  }
+
+  // 4. 过滤候选池：只保留符合历史模式的组合 (覆盖 95%+ 的历史数据)
+  const filteredPool = candidatePool.filter((c) => {
+    const sum = c.reds.reduce((s, n) => s + n, 0);
+    if (sum < 70 || sum > 130) return false;
+    const oddCount = c.reds.filter((n) => n % 2 === 1).length;
+    if (oddCount < 1 || oddCount > 5) return false;
+    return true;
+  });
+  const pool = filteredPool.length > 20 ? filteredPool : candidatePool;
+
+  // 5. 贪心选择：每次选择能增加最多新覆盖号码的组合
   const coveredNums = new Set<number>();
   const selectedCombos: { reds: number[]; score: number }[] = [];
 
   // 第一组：选得分最高的
-  candidatePool.sort((a, b) => b.score - a.score);
-  if (candidatePool.length > 0) {
-    selectedCombos.push(candidatePool[0]);
-    candidatePool[0].reds.forEach((r) => coveredNums.add(r));
+  pool.sort((a, b) => b.score - a.score);
+  if (pool.length > 0) {
+    selectedCombos.push(pool[0]);
+    pool[0].reds.forEach((r) => coveredNums.add(r));
   }
 
-  // 后续 7 组：贪心选择覆盖最多新号码的组合
+  // 后续 7 组：贪心选择覆盖最多新号码的组合 (质量+覆盖平衡)
   for (let i = 1; i < 8; i++) {
     let bestCandidate: typeof candidatePool[0] | null = null;
     let bestNewCoverage = -1;
 
-    for (const candidate of candidatePool) {
+    for (const candidate of pool) {
       const key = candidate.reds.join(",");
-      // 跳过已选的
       if (selectedCombos.some((s) => s.reds.join(",") === key)) continue;
-      // 计算新增覆盖
       const newNums = candidate.reds.filter((r) => !coveredNums.has(r)).length;
-      // 综合评分：新覆盖数 * 10 + 原始得分
-      const compositeScore = newNums * 10 + candidate.score / 100;
+      const compositeScore = newNums * 6 + candidate.score / 40;
       if (compositeScore > bestNewCoverage) {
         bestNewCoverage = compositeScore;
         bestCandidate = candidate;
