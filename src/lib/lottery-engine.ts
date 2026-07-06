@@ -1104,7 +1104,7 @@ export function backtest(draws: DrawRecord[], sampleSize: number = 30): Backtest
     }
 
     // 蓝球命中评估 (多维度)
-    const predictedBlues = [...new Set(predictions.map((p) => p.blue))];
+    const predictedBlues = Array.from(new Set(predictions.map((p) => p.blue)));
     // 首选蓝球: 第一组预测的蓝球 (而非最佳红球匹配的蓝球)
     const blueHit = predictions[0].blue === actual.blue;
     const blueTop3Hit = predictedBlues.slice(0, 3).includes(actual.blue);
