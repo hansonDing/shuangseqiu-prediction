@@ -91,11 +91,16 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json(lastUpdateResult);
   }
 
-  const latestPeriod = await getLatestPeriodInDb();
-  return NextResponse.json({
-    success: true,
-    message: '尚未执行过更新',
-    latest_period: latestPeriod,
-    updated_at: null,
-  });
+  try {
+    const latestPeriod = await getLatestPeriodInDb();
+    return NextResponse.json({
+      success: true,
+      message: '尚未执行过更新',
+      latest_period: latestPeriod,
+      updated_at: null,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '未知错误';
+    return NextResponse.json({ success: false, message: `查询失败: ${message}` }, { status: 500 });
+  }
 }

@@ -2,7 +2,7 @@
  * 双色球开奖数据抓取模块
  * 数据源：500.com (datachart.500.com/ssq)
  */
-import { getSupabaseClient } from '../storage/database/supabase-client';
+import { upsertDraws, getLatestPeriod } from '../storage/database/local-store';
 
 interface LotteryDraw {
   period: string;
@@ -58,23 +58,15 @@ function parseHtml(html: string): LotteryDraw[] {
   // 匹配模式：期号 + 6个红球 + 1个蓝球 + 日期
   const rowPattern = /<td>(\d{5,7})<\/td>\s*<td class="t_cfont2">(\d{2})<\/td>\s*<td class="t_cfont2">(\d{2})<\/td>\s*<td class="t_cfont2">(\d{2})<\/td>\s*<td class="t_cfont2">(\d{2})<\/td>\s*<td class="t_cfont2">(\d{2})<\/td>\s*<td class="t_cfont2">(\d{2})<\/td>\s*<td class="t_cfont4">(\d{2})<\/td>/g;
 
-  // 日期模式
-  const datePattern = /(\d{4}-\d{2}-\d{2})/g;
-  const dates: string[] = [];
-  let dateMatch;
-  while ((dateMatch = datePattern.exec(html)) !== null) {
-    dates.push(dateMatch[1]);
-  }
-
   let match;
-  let dateIndex = 0;
   while ((match = rowPattern.exec(html)) !== null) {
     let period = match[1];
-    // 补全期号：26073 -> 2026073
+    // 补全期号：26073 -> 2026073；非 7 位的畸形期号直接跳过，避免脏数据
     if (period.length === 5) {
       period = '20' + period;
-    } else if (period.length === 6) {
-      period = '20' + period;
+    }
+    if (period.length !== 7) {
+      continue;
     }
 
     const reds = [
@@ -87,8 +79,10 @@ function parseHtml(html: string): LotteryDraw[] {
     ].sort((a, b) => a - b);
 
     const blue = parseInt(match[8], 10);
-    const drawDate = dates[dateIndex] || '';
-    dateIndex++;
+    // 日期与该行绑定：在本行结束后的有限窗口内查找最近日期，
+    // 避免全局顺序消费导致页面其他日期文本引起整体错位
+    const afterRow = html.slice(match.index + match[0].length, match.index + match[0].length + 400);
+    const drawDate = afterRow.match(/\d{4}-\d{2}-\d{2}/)?.[0] || '';
 
     // 验证数据有效性
     if (reds.every((r) => r >= 1 && r <= 33) && blue >= 1 && blue <= 16) {
@@ -110,54 +104,22 @@ function parseHtml(html: string): LotteryDraw[] {
 }
 
 /**
- * 将抓取的数据同步到数据库
+ * 将抓取的数据同步到本地存储
  */
 export async function syncDrawsToDatabase(draws: LotteryDraw[]): Promise<{
   inserted: number;
   skipped: number;
   latestPeriod: string | null;
 }> {
-  const client = getSupabaseClient();
-  let inserted = 0;
-  let skipped = 0;
+  const { inserted, skipped } = await upsertDraws(draws);
 
-  for (const draw of draws) {
-    // 检查是否已存在
-    const { data: existing } = await client
-      .from('lottery_draws')
-      .select('id')
-      .eq('period', draw.period)
-      .maybeSingle();
-
-    if (existing) {
-      skipped++;
-      continue;
-    }
-
-    // 插入新数据
-    const { error } = await client.from('lottery_draws').insert(draw);
-    if (error) {
-      console.error(`插入期号 ${draw.period} 失败:`, error.message);
-      continue;
-    }
-    inserted++;
-  }
-
-  const latestPeriod = draws.length > 0 ? draws[0].period : null;
+  const latestPeriod = getLatestPeriod();
   return { inserted, skipped, latestPeriod };
 }
 
 /**
- * 获取数据库中最新一期数据
+ * 获取存储中最新一期数据
  */
 export async function getLatestPeriodInDb(): Promise<string | null> {
-  const client = getSupabaseClient();
-  const { data } = await client
-    .from('lottery_draws')
-    .select('period')
-    .order('period', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  return data?.period || null;
+  return getLatestPeriod();
 }

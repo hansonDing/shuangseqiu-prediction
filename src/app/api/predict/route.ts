@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { getAllDraws } from '@/storage/database/local-store';
 import { predict } from '@/lib/lottery-engine';
-import type { DrawRecord } from '@/lib/lottery-engine';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -9,37 +8,22 @@ export async function GET(request: Request) {
   const recencyWeight = parseFloat(searchParams.get('recency') || '0.35');
   const balanceWeight = parseFloat(searchParams.get('balance') || '0.25');
 
-  const client = getSupabaseClient();
-  const allDraws: DrawRecord[] = [];
-  let page = 0;
-  const pageSize = 1000;
+  try {
+    const allDraws = getAllDraws();
 
-  while (true) {
-    const { data, error } = await client
-      .from('lottery_draws')
-      .select('id, period, draw_date, red1, red2, red3, red4, red5, red6, blue')
-      .order('period', { ascending: true })
-      .range(page * pageSize, (page + 1) * pageSize - 1);
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (allDraws.length < 10) {
+      return NextResponse.json({ error: '历史数据不足，无法生成预测，请先在数据管理页点击“立即更新数据”' }, { status: 400 });
     }
 
-    if (!data?.length) break;
-    allDraws.push(...(data as DrawRecord[]));
-    if (data.length < pageSize) break;
-    page++;
+    const predictions = predict(allDraws, {
+      frequency: freqWeight,
+      recency: recencyWeight,
+      balance: balanceWeight,
+    });
+
+    return NextResponse.json({ predictions, total_draws: allDraws.length });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '未知错误';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-
-  if (allDraws.length < 10) {
-    return NextResponse.json({ error: '历史数据不足，无法生成预测' }, { status: 400 });
-  }
-
-  const predictions = predict(allDraws, {
-    frequency: freqWeight,
-    recency: recencyWeight,
-    balance: balanceWeight,
-  });
-
-  return NextResponse.json({ predictions, total_draws: allDraws.length });
 }

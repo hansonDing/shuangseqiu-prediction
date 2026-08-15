@@ -31,6 +31,8 @@ interface AnalysisData {
   oddEven: { odd_count: number; even_count: number; trend: { period: string; odd: number; even: number }[] };
   zones: { zone: string; count: number; rate: number }[];
   recent_draws: DrawRecord[];
+  total_draws: number;
+  oldest_period: string | null;
 }
 
 interface DrawRecord {
@@ -193,15 +195,25 @@ export default function LotteryDashboard() {
     message: string | null;
     error: boolean;
   }>({ updating: false, lastUpdate: null, message: null, error: false });
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [predictError, setPredictError] = useState<string | null>(null);
+  const [backtestError, setBacktestError] = useState<string | null>(null);
 
   const fetchAnalysis = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch('/api/analysis');
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `请求失败 (${res.status})`);
+      }
       const data = await res.json();
       setAnalysis(data);
+      setErrorMessage(null);
     } catch (err) {
+      const message = err instanceof Error ? err.message : '未知错误';
       console.error('Failed to fetch analysis:', err);
+      setErrorMessage(`分析数据加载失败：${message}`);
     } finally {
       setLoading(false);
     }
@@ -215,11 +227,11 @@ export default function LotteryDashboard() {
     setUpdateStatus({ updating: true, lastUpdate: null, message: '正在获取最新开奖数据...', error: false });
     try {
       const res = await fetch('/api/update', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
+      const data = await res.json().catch(() => null);
+      if (data?.success) {
         setUpdateStatus({
           updating: false,
-          lastUpdate: data.last_update,
+          lastUpdate: data.updated_at ? new Date(data.updated_at).toLocaleString('zh-CN') : null,
           message: data.message,
           error: false,
         });
@@ -229,7 +241,7 @@ export default function LotteryDashboard() {
         setUpdateStatus({
           updating: false,
           lastUpdate: null,
-          message: data.error || '更新失败',
+          message: data?.message || data?.error || '更新失败',
           error: true,
         });
       }
@@ -252,10 +264,17 @@ export default function LotteryDashboard() {
         balance: weights.balance.toString(),
       });
       const res = await fetch(`/api/predict?${params}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `请求失败 (${res.status})`);
+      }
       const data = await res.json();
       setPredictions(data.predictions || []);
+      setPredictError(null);
     } catch (err) {
+      const message = err instanceof Error ? err.message : '未知错误';
       console.error('Prediction failed:', err);
+      setPredictError(`预测生成失败：${message}`);
     } finally {
       setPredicting(false);
     }
@@ -264,11 +283,24 @@ export default function LotteryDashboard() {
   const handleBacktest = async () => {
     setBacktesting(true);
     try {
-      const res = await fetch('/api/backtest?sample=30');
+      const params = new URLSearchParams({
+        sample: '100',
+        frequency: weights.frequency.toString(),
+        recency: weights.recency.toString(),
+        balance: weights.balance.toString(),
+      });
+      const res = await fetch(`/api/backtest?${params}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `请求失败 (${res.status})`);
+      }
       const data = await res.json();
       setBacktestResult(data);
+      setBacktestError(null);
     } catch (err) {
+      const message = err instanceof Error ? err.message : '未知错误';
       console.error('Backtest failed:', err);
+      setBacktestError(`回测失败：${message}`);
     } finally {
       setBacktesting(false);
     }
@@ -283,6 +315,27 @@ export default function LotteryDashboard() {
       </div>
     );
   }
+
+  // 接口失败时展示错误页而非崩溃
+  if (!analysis) {
+    return (
+      <div className="min-h-screen bg-background p-4 md:p-8">
+        <div className="max-w-7xl mx-auto">
+          <Card className="bg-card/50 border-border/50">
+            <CardContent className="py-12 text-center space-y-4">
+              <AlertCircle className="w-12 h-12 text-destructive/60 mx-auto" />
+              <p className="text-sm text-muted-foreground">{errorMessage || '数据加载失败'}</p>
+              <Button variant="outline" onClick={fetchAnalysis}>重试</Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  // 预计算排行榜，避免在渲染中对 state 数组原地排序
+  const topRed = [...analysis.frequency.red].sort((a, b) => b.count - a.count)[0];
+  const topBlue = [...analysis.frequency.blue].sort((a, b) => b.count - a.count)[0];
 
   return (
     <div className="min-h-screen bg-background">
@@ -375,20 +428,20 @@ export default function LotteryDashboard() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <StatCard
                 title="总期数"
-                value={analysis?.recent_draws.length ? `${analysis.recent_draws[0]?.period}` : '-'}
-                subtitle={`共 ${analysis?.frequency.red.reduce((s, f) => s + f.count, 0) ? Math.round(analysis.frequency.red.reduce((s, f) => s + f.count, 0) / 6) : 0} 期`}
+                value={analysis.total_draws}
+                subtitle={`最新一期 ${analysis.recent_draws[0]?.period ?? '-'}`}
                 icon={BarChart3}
               />
               <StatCard
                 title="最热红球"
-                value={analysis ? `${analysis.frequency.red.sort((a, b) => b.count - a.count)[0]?.number.toString().padStart(2, '0')}` : '-'}
-                subtitle={analysis ? `出现 ${analysis.frequency.red[0]?.count} 次` : ''}
+                value={topRed ? topRed.number.toString().padStart(2, '0') : '-'}
+                subtitle={topRed ? `出现 ${topRed.count} 次` : ''}
                 icon={TrendingUp}
               />
               <StatCard
                 title="最热蓝球"
-                value={analysis ? `${analysis.frequency.blue.sort((a, b) => b.count - a.count)[0]?.number.toString().padStart(2, '0')}` : '-'}
-                subtitle={analysis ? `出现 ${analysis.frequency.blue[0]?.count} 次` : ''}
+                value={topBlue ? topBlue.number.toString().padStart(2, '0') : '-'}
+                subtitle={topBlue ? `出现 ${topBlue.count} 次` : ''}
                 icon={Zap}
               />
               <StatCard
@@ -537,7 +590,7 @@ export default function LotteryDashboard() {
                 <CardContent>
                   <ResponsiveContainer width="100%" height={350}>
                     <BarChart
-                      data={analysis?.frequency.red.sort((a, b) => b.count - a.count).slice(0, 15)}
+                      data={[...analysis.frequency.red].sort((a, b) => b.count - a.count).slice(0, 15)}
                       layout="vertical"
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
@@ -560,7 +613,7 @@ export default function LotteryDashboard() {
                 <CardContent>
                   <ResponsiveContainer width="100%" height={350}>
                     <BarChart
-                      data={analysis?.frequency.blue.sort((a, b) => b.count - a.count)}
+                      data={[...analysis.frequency.blue].sort((a, b) => b.count - a.count)}
                       layout="vertical"
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
@@ -584,7 +637,7 @@ export default function LotteryDashboard() {
               </CardHeader>
               <CardContent>
                 <ResponsiveContainer width="100%" height={250}>
-                  <BarChart data={analysis?.frequency.red.sort((a, b) => a.number - b.number)}>
+                  <BarChart data={[...analysis.frequency.red].sort((a, b) => a.number - b.number)}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                     <XAxis dataKey="number" tick={{ fontSize: 9, fill: '#94a3b8' }} />
                     <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} />
@@ -610,8 +663,8 @@ export default function LotteryDashboard() {
                     <p className="font-medium text-foreground mb-1">多策略融合预测引擎 v2</p>
                     <p className="text-muted-foreground text-xs leading-relaxed">
                       综合4种策略生成预测：频率统计 + 近期热度(时间衰减) + 渐进遗漏回补 + 共现矩阵分析。
-                      每组号码经过6项约束过滤：奇偶比(2:4~4:2)、大小比(2:4~4:2)、区间覆盖(≥4区)、和值范围(60~150)、跨度(≥18)、连号(≤2组)。
-                      组合生成采用确定性算法，相同参数始终产生相同结果。
+                      每组号码经过6项约束过滤：奇偶比(1:5~5:1)、大小比(1:5~5:1)、区间覆盖(≥3区)、和值范围(40~170)、跨度(≥15)、连号(≤2组)。
+                      组合生成采用确定性算法（固定随机种子），相同数据与参数始终产生相同结果。
                     </p>
                   </div>
                 </div>
@@ -682,6 +735,12 @@ export default function LotteryDashboard() {
                     </>
                   )}
                 </Button>
+                {predictError && (
+                  <div className="text-xs px-3 py-2 rounded-lg bg-destructive/10 text-destructive flex items-center gap-2">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    {predictError}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -727,7 +786,7 @@ export default function LotteryDashboard() {
               <Card className="bg-card/50 border-border/50">
                 <CardContent className="py-12 text-center">
                   <Target className="w-12 h-12 text-muted-foreground/50 mx-auto mb-4" />
-                  <p className="text-muted-foreground">调节参数后点击"生成预测"按钮</p>
+                  <p className="text-muted-foreground">调节参数后点击“生成预测”按钮</p>
                   <p className="text-xs text-muted-foreground mt-1">系统将基于历史数据生成推荐号码组合</p>
                 </CardContent>
               </Card>
@@ -756,10 +815,16 @@ export default function LotteryDashboard() {
                   ) : (
                     <>
                       <Activity className="w-4 h-4 mr-2" />
-                      开始回测 (30期)
+                      开始回测 (100期)
                     </>
                   )}
                 </Button>
+                {backtestError && (
+                  <div className="mt-3 text-xs px-3 py-2 rounded-lg bg-destructive/10 text-destructive flex items-center gap-2">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    {backtestError}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -868,8 +933,8 @@ export default function LotteryDashboard() {
               <Card className="bg-card/50 border-border/50">
                 <CardContent className="py-12 text-center">
                   <History className="w-12 h-12 text-muted-foreground/50 mx-auto mb-4" />
-                  <p className="text-muted-foreground">点击"开始回测"验证预测算法</p>
-                  <p className="text-xs text-muted-foreground mt-1">系统将使用最近30期数据进行回测分析</p>
+                  <p className="text-muted-foreground">点击“开始回测”验证预测算法</p>
+                  <p className="text-xs text-muted-foreground mt-1">系统将使用最近100期数据进行回测分析</p>
                 </CardContent>
               </Card>
             )}
@@ -890,7 +955,7 @@ export default function LotteryDashboard() {
                   <div className="p-4 rounded-lg bg-secondary/20 border border-border/30 space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">数据来源</span>
-                      <span className="text-sm font-medium">中彩网 (zhcw.com)</span>
+                      <span className="text-sm font-medium">500彩票网 (datachart.500.com)</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">更新频率</span>
@@ -949,7 +1014,7 @@ export default function LotteryDashboard() {
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">总期数</span>
                       <span className="text-sm font-mono font-bold text-amber-400">
-                        {analysis?.recent_draws?.length || 0} 期
+                        {analysis.total_draws} 期
                       </span>
                     </div>
                     {analysis?.recent_draws && analysis.recent_draws.length > 0 && (
@@ -969,7 +1034,7 @@ export default function LotteryDashboard() {
                         <div className="flex items-center justify-between">
                           <span className="text-sm text-muted-foreground">最早一期</span>
                           <Badge variant="outline" className="font-mono">
-                            {analysis.recent_draws[analysis.recent_draws.length - 1].period}
+                            {analysis.oldest_period ?? '-'}
                           </Badge>
                         </div>
                       </>
@@ -1017,7 +1082,7 @@ export default function LotteryDashboard() {
                   ))}
                 </div>
                 <p className="text-xs text-muted-foreground mt-4 text-center">
-                  系统在服务启动时自动检查并执行更新计划，也可随时点击"立即更新"手动获取最新数据
+                  系统在服务启动时自动检查并执行更新计划，也可随时点击“立即更新”手动获取最新数据
                 </p>
               </CardContent>
             </Card>

@@ -7,7 +7,7 @@
 - **Language**: TypeScript 5
 - **UI 组件**: shadcn/ui (基于 Radix UI)
 - **Styling**: Tailwind CSS 4
-- **Database**: Supabase (PostgreSQL)
+- **Database**: 本地 JSON 文件存储（data/lottery_draws.json，无需外部凭据）
 - **Charts**: Recharts
 
 ## 项目概述
@@ -20,8 +20,7 @@
 ├── public/                          # 静态资源
 ├── scripts/                         # 构建与启动脚本
 │   ├── build.sh / dev.sh / start.sh
-│   ├── seed.ts                      # 数据库种子脚本 (模拟数据)
-│   ├── seed-real.ts                 # 真实数据种子脚本
+│   ├── seed-local-data.ts           # 本地数据初始化脚本 (500.com 真实数据)
 │   └── cron.ts                      # 定时更新任务
 ├── src/
 │   ├── app/
@@ -43,7 +42,8 @@
 │   │   ├── lottery-fetcher.ts       # 数据抓取模块 (500.com)
 │   │   └── utils.ts                 # 通用工具函数
 │   └── storage/database/
-│       ├── supabase-client.ts       # Supabase 客户端
+│       ├── local-store.ts           # 本地 JSON 文件存储模块
+│       ├── supabase-client.ts       # Supabase 客户端（凭据缺失时返回 null，已弃用）
 │       └── shared/schema.ts         # Drizzle 表结构定义
 ├── DESIGN.md                        # 设计规范
 ├── next.config.ts
@@ -53,9 +53,10 @@
 
 ## 数据库
 
-- **表**: `lottery_draws` - 存储双色球历史开奖数据
-- **字段**: period(期号), draw_date(日期), red1-6(红球), blue(蓝球)
-- **种子**: `npx tsx scripts/seed.ts` 生成150期模拟数据
+- **存储**: 本地 JSON 文件 `data/lottery_draws.json`（已加入 .gitignore）
+- **字段**: id, period(期号), draw_date(日期), red1-6(红球), blue(蓝球)
+- **初始化**: `pnpm tsx scripts/seed-local-data.ts [期数]` 从 500.com 抓取真实历史数据
+- **增量更新**: 页面“数据管理”Tab 的“立即更新数据”按钮或 POST /api/update
 
 ## API 接口
 

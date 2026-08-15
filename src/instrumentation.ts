@@ -10,11 +10,19 @@ const TARGET_DAYS = [1, 3, 5]; // 周一、周三、周五
 let lastExecutedDate: string | null = null;
 let cronStarted = false;
 
+// 本地日期字符串（与 getDay/getHours 保持同一时区口径，避免混用 UTC 日期）
+function localDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function shouldRunNow(): boolean {
   const now = new Date();
   const day = now.getDay();
   const hour = now.getHours();
-  const today = now.toISOString().split('T')[0];
+  const today = localDateStr(now);
 
   return TARGET_DAYS.includes(day)
     && hour === UPDATE_HOUR
@@ -22,9 +30,10 @@ function shouldRunNow(): boolean {
 }
 
 async function triggerUpdate(): Promise<void> {
-  const port = process.env.DEPLOY_RUN_PORT || '5000';
+  // 与 server.ts 保持一致：优先使用 PORT，其次 DEPLOY_RUN_PORT
+  const port = process.env.PORT || process.env.DEPLOY_RUN_PORT || '5000';
   const url = `http://localhost:${port}/api/update`;
-  const today = new Date().toISOString().split('T')[0];
+  const today = localDateStr(new Date());
 
   console.log(`[LotteryCron ${new Date().toISOString()}] 开始执行数据更新...`);
 

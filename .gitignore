@@ -163,3 +163,6 @@ Desktop.ini
 # Misc
 .coze-logs
 .codegraph/
+
+# 本地开奖数据存储
+data/
