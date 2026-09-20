@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { fetchLatestDraws, syncDrawsToDatabase, getLatestPeriodInDb } from '@/lib/lottery-fetcher';
 import { isAuthorized } from '@/lib/request-auth';
+import { settlePendingDraws } from '@/storage/database/simulation-repository';
 
 interface UpdateResult {
   success: boolean;
@@ -10,6 +11,7 @@ interface UpdateResult {
   latest_period: string | null;
   message: string;
   updated_at: string;
+  settled_count: number;
 }
 
 // 全局状态存储 (进程内)
@@ -30,6 +32,7 @@ export async function POST(request: Request): Promise<NextResponse<UpdateResult>
         latest_period: null,
         message: '未授权：请从本机触发，或配置 UPDATE_TOKEN 后携带 Bearer token',
         updated_at: new Date().toISOString(),
+        settled_count: 0,
       },
       { status: 401 }
     );
@@ -51,6 +54,7 @@ export async function POST(request: Request): Promise<NextResponse<UpdateResult>
         latest_period: currentLatest,
         message: '未解析到有效的开奖数据，数据源格式可能已变更',
         updated_at: new Date().toISOString(),
+        settled_count: 0,
       };
       lastUpdateResult = result;
       return NextResponse.json(result, { status: 422 });
@@ -58,6 +62,9 @@ export async function POST(request: Request): Promise<NextResponse<UpdateResult>
 
     // 同步到数据库
     const syncResult = await syncDrawsToDatabase(draws);
+
+    // 新数据入库后自动结算未结算持仓（错过的期数在此补结）
+    const settleResult = await settlePendingDraws();
 
     // 获取更新后的最新期号
     const newLatest = await getLatestPeriodInDb();
@@ -74,6 +81,7 @@ export async function POST(request: Request): Promise<NextResponse<UpdateResult>
       latest_period: newLatest,
       message,
       updated_at: new Date().toISOString(),
+      settled_count: settleResult.settled,
     };
 
     lastUpdateResult = result;
@@ -88,6 +96,7 @@ export async function POST(request: Request): Promise<NextResponse<UpdateResult>
       latest_period: null,
       message: `更新失败: ${errorMessage}`,
       updated_at: new Date().toISOString(),
+      settled_count: 0,
     };
     // 出错时不覆盖 lastUpdateResult，保留上一次成功的更新状态供 GET 查询
     return NextResponse.json(result, { status: 500 });
