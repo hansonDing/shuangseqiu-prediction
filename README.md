@@ -50,6 +50,13 @@ server/
 └── dist/                    # 编译输出目录（自动生成）
 ```
 
+## 模拟盘
+
+- 每周二/四/日 19:30 自动预测并买入 10 注（单注 2 元），初始资金 10 万元
+- 开奖数据入库后自动结算（一等奖按 500 万、二等奖按 20 万估算，可用 SIMULATE_PRIZE_FIRST/SECOND 调整）
+- 数据存储于 DuckDB（data/lottery.duckdb），首次启动自动从 lottery_draws.json 迁移
+- 环境变量：SIMULATE_INITIAL_CAPITAL / SIMULATE_BET_COUNT / SIMULATE_BET_COST / UPDATE_TOKEN
+
 ## 核心开发规范
 
 ### 1. 组件开发

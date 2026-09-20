@@ -8,6 +8,7 @@ export async function GET(request: Request) {
   const offset = Math.max(0, Number(searchParams.get('offset')) || 0);
 
   try {
+    await ensureDrawsLoaded();
     // 接口按期号降序分页（offset=0 为最新一页）
     const allDesc = getAllDraws().reverse();
     const data = allDesc.slice(offset, offset + limit);

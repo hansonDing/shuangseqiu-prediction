@@ -49,7 +49,7 @@ try {
     console.log(`✓ 首页: HTTP ${home.status}, ${html.length} bytes, 页面标记=${hasMarker}`);
     if (!hasMarker) exitCode = 1;
 
-    for (const p of ['/api/analysis', '/api/predict']) {
+    for (const p of ['/api/analysis', '/api/predict', '/api/simulation']) {
       const r = await fetch(`${BASE}${p}`);
       const body = JSON.stringify(await r.json()).slice(0, 120);
       console.log(`✓ ${p} -> HTTP ${r.status} | ${body}`);
