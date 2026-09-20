@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS draws (
 );
 
 CREATE TABLE IF NOT EXISTS prediction_runs (
-  id           BIGINT PRIMARY KEY,
+  id           INTEGER PRIMARY KEY,
   period       VARCHAR NOT NULL,
   weights      VARCHAR NOT NULL,
   combos       VARCHAR NOT NULL,
@@ -73,8 +73,8 @@ CREATE TABLE IF NOT EXISTS prediction_runs (
 );
 
 CREATE TABLE IF NOT EXISTS bets (
-  id         BIGINT PRIMARY KEY,
-  run_id     BIGINT NOT NULL,
+  id         INTEGER PRIMARY KEY,
+  run_id     INTEGER NOT NULL,
   period     VARCHAR NOT NULL,
   reds       VARCHAR NOT NULL,
   blue       SMALLINT NOT NULL,
@@ -84,8 +84,8 @@ CREATE TABLE IF NOT EXISTS bets (
 );
 
 CREATE TABLE IF NOT EXISTS settlements (
-  id         BIGINT PRIMARY KEY,
-  bet_id     BIGINT NOT NULL,
+  id         INTEGER PRIMARY KEY,
+  bet_id     INTEGER NOT NULL,
   period     VARCHAR NOT NULL,
   red_hits   SMALLINT NOT NULL,
   blue_hit   BOOLEAN NOT NULL,
@@ -115,17 +115,17 @@ CREATE TABLE IF NOT EXISTS account (
 );
 
 CREATE TABLE IF NOT EXISTS fund_transactions (
-  id            BIGINT PRIMARY KEY,
+  id            INTEGER PRIMARY KEY,
   type          VARCHAR NOT NULL,
   amount        DOUBLE NOT NULL,
   balance_after DOUBLE NOT NULL,
-  ref_id        BIGINT,
+  ref_id        INTEGER,
   note          VARCHAR,
   created_at    TIMESTAMP DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS operation_log (
-  id         BIGINT PRIMARY KEY,
+  id         INTEGER PRIMARY KEY,
   type       VARCHAR NOT NULL,
   message    VARCHAR NOT NULL,
   detail     VARCHAR,
