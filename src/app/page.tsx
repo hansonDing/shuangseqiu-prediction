@@ -14,8 +14,9 @@ import {
 import {
   TrendingUp, BarChart3, Target, History, RefreshCw,
   CircleDot, Activity, Zap, Award, Download, CheckCircle2,
-  AlertCircle, Clock,
+  AlertCircle, Clock, Wallet,
 } from 'lucide-react';
+import { SimulationPanel } from '@/components/simulation-panel';
 
 interface FrequencyItem {
   number: number;
@@ -418,6 +419,10 @@ export default function LotteryDashboard() {
             <TabsTrigger value="datasource" className="gap-2">
               <Download className="w-4 h-4" />
               数据管理
+            </TabsTrigger>
+            <TabsTrigger value="simulation" className="gap-2">
+              <Wallet className="w-4 h-4" />
+              模拟盘
             </TabsTrigger>
           </TabsList>
 
@@ -1085,6 +1090,11 @@ export default function LotteryDashboard() {
                 </p>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* 模拟盘 */}
+          <TabsContent value="simulation" className="space-y-6">
+            <SimulationPanel />
           </TabsContent>
         </Tabs>
       </main>
