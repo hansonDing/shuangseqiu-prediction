@@ -45,6 +45,7 @@ export async function fetchLatestDraws(count: number = 30): Promise<LotteryDraw[
  */
 function parseHtml(html: string): LotteryDraw[] {
   const draws: LotteryDraw[] = [];
+  const malformedPeriods: string[] = [];
 
   // 500.com 的数据格式：
   // <td>2</td> (类型标识)
@@ -61,11 +62,12 @@ function parseHtml(html: string): LotteryDraw[] {
   let match;
   while ((match = rowPattern.exec(html)) !== null) {
     let period = match[1];
-    // 补全期号：26073 -> 2026073；非 7 位的畸形期号直接跳过，避免脏数据
+    // 补全期号：26073 -> 2026073；非 7 位的畸形期号记录下来并跳过，避免脏数据
     if (period.length === 5) {
       period = '20' + period;
     }
     if (period.length !== 7) {
+      malformedPeriods.push(period);
       continue;
     }
 
@@ -98,6 +100,12 @@ function parseHtml(html: string): LotteryDraw[] {
         blue,
       });
     }
+  }
+
+  if (malformedPeriods.length > 0) {
+    console.warn(
+      `[LotteryFetcher] 跳过 ${malformedPeriods.length} 条畸形期号数据: ${malformedPeriods.slice(0, 5).join(', ')}${malformedPeriods.length > 5 ? ' ...' : ''}`
+    );
   }
 
   return draws;

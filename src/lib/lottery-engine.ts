@@ -60,7 +60,6 @@ export interface BacktestResult {
   total_periods: number;
   tested_periods: number;
   avg_red_hits: number;
-  avg_blue_hits: number;
   red_hit_distribution: { hits: number; count: number }[];
   max_red_hits: number;
   red_4plus_count: number;
@@ -199,7 +198,7 @@ function analyzeZones(draws: DrawRecord[]): AnalysisResult['zones'] {
   return zoneLabels.map((zone, i) => ({
     zone,
     count: zoneCounts[i],
-    rate: Math.round(zoneCounts[i] / total * 1000) / 10,
+    rate: total > 0 ? Math.round(zoneCounts[i] / total * 1000) / 10 : 0,
   }));
 }
 
@@ -547,8 +546,8 @@ function blueStrategyI(sorted: DrawRecord[]): Record<number, number> {
   const allBlues = sorted.map(d => d.blue);
 
   // 在历史中搜索与最近3期序列相似的模式
-  // 精确匹配3期序列
-  for (let i = 0; i < allBlues.length - 4; i++) {
+  // 精确匹配3期序列（上界取 i+3 < len，自动排除最近一期本身，其无"下一期"可统计）
+  for (let i = 0; i + 3 < allBlues.length; i++) {
     if (allBlues[i] === last3[0] && allBlues[i + 1] === last3[1] && allBlues[i + 2] === last3[2]) {
       const nextBlue = allBlues[i + 3];
       scores[nextBlue] += 2.0;
@@ -557,7 +556,7 @@ function blueStrategyI(sorted: DrawRecord[]): Record<number, number> {
 
   // 模糊匹配: 匹配最近2期序列
   const last2 = sorted.slice(-2).map(d => d.blue);
-  for (let i = 0; i < allBlues.length - 3; i++) {
+  for (let i = 0; i + 2 < allBlues.length; i++) {
     if (allBlues[i] === last2[0] && allBlues[i + 1] === last2[1]) {
       const nextBlue = allBlues[i + 2];
       scores[nextBlue] += 1.0;
@@ -566,7 +565,7 @@ function blueStrategyI(sorted: DrawRecord[]): Record<number, number> {
 
   // 模糊匹配: 匹配最近1期 (转移矩阵)
   const last1 = sorted[sorted.length - 1].blue;
-  for (let i = 0; i < allBlues.length - 2; i++) {
+  for (let i = 0; i + 1 < allBlues.length; i++) {
     if (allBlues[i] === last1) {
       const nextBlue = allBlues[i + 1];
       scores[nextBlue] += 0.5;
@@ -575,7 +574,7 @@ function blueStrategyI(sorted: DrawRecord[]): Record<number, number> {
 
   // 大小模式匹配: 最近3期的大小模式
   const last3Size = last3.map(b => b <= 8 ? 'S' : 'B');
-  for (let i = 0; i < allBlues.length - 4; i++) {
+  for (let i = 0; i + 3 < allBlues.length; i++) {
     const histSize = [allBlues[i], allBlues[i + 1], allBlues[i + 2]].map(b => b <= 8 ? 'S' : 'B');
     if (histSize[0] === last3Size[0] && histSize[1] === last3Size[1] && histSize[2] === last3Size[2]) {
       const nextBlue = allBlues[i + 3];
@@ -1051,7 +1050,6 @@ export function backtest(draws: DrawRecord[], sampleSize: number = 100, weights?
     total_periods: total,
     tested_periods: testCount,
     avg_red_hits: Math.round(totalRedHits / testCount * 100) / 100,
-    avg_blue_hits: Math.round(blueHits / testCount * 100) / 100,
     red_hit_distribution: Object.entries(redHitDist).map(([hits, count]) => ({
       hits: parseInt(hits),
       count,

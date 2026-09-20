@@ -66,21 +66,6 @@ export function getAllDraws(): DrawRecord[] {
 }
 
 /**
- * 按期号升序分页查询
- */
-export function getDrawsPaged(offset: number, limit: number): DrawRecord[] {
-  const all = getAllDraws();
-  return all.slice(offset, offset + limit);
-}
-
-/**
- * 获取总数
- */
-export function getTotalDraws(): number {
-  return getAllDraws().length;
-}
-
-/**
  * 按期号批量写入（已存在则跳过），返回插入/跳过数量
  */
 export function upsertDraws(

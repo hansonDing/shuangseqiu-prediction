@@ -59,7 +59,6 @@ interface BacktestResult {
   total_periods: number;
   tested_periods: number;
   avg_red_hits: number;
-  avg_blue_hits: number;
   red_hit_distribution: { hits: number; count: number }[];
   blue_hit_rate: number;
   blue_top3_hit_rate?: number;

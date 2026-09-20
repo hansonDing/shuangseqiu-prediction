@@ -14,15 +14,59 @@ interface UpdateResult {
 // 全局状态存储 (进程内)
 let lastUpdateResult: UpdateResult | null = null;
 
-export function getLastUpdateResult(): UpdateResult | null {
-  return lastUpdateResult;
+/**
+ * 更新触发鉴权：
+ * 1. 配置了 UPDATE_TOKEN 环境变量时，必须携带 `Authorization: Bearer <token>`
+ * 2. 未配置 token 时，仅允许回环地址（127.0.0.1 / ::1 / localhost）触发，
+ *    外部请求一律拒绝，防止接口被任意调用
+ * 注意：Next.js 会自动填充 x-forwarded-for（值为对端 IP），因此不能
+ * 以"该头是否存在"判断外部请求，必须解析其 IP 是否为回环地址
+ */
+function isLoopback(ip: string): boolean {
+  return ip === 'localhost'
+    || ip.startsWith('127.')
+    || ip === '::1'
+    || ip === '0:0:0:0:0:0:0:1'
+    || ip.startsWith('::ffff:127.')
+    || ip.startsWith('::ffff:7f00:');
+}
+
+function isAuthorized(request: Request): boolean {
+  const token = process.env.UPDATE_TOKEN;
+  if (token) {
+    return request.headers.get('authorization') === `Bearer ${token}`;
+  }
+
+  const forwarded = request.headers.get('x-forwarded-for');
+  const peer = (forwarded ? forwarded.split(',')[0].trim() : null)
+    ?? request.headers.get('x-real-ip');
+  if (peer) {
+    return isLoopback(peer);
+  }
+  const hostname = new URL(request.url).hostname;
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1';
 }
 
 /**
  * POST /api/update
  * 手动触发数据更新
  */
-export async function POST(): Promise<NextResponse<UpdateResult>> {
+export async function POST(request: Request): Promise<NextResponse<UpdateResult>> {
+  if (!isAuthorized(request)) {
+    return NextResponse.json(
+      {
+        success: false,
+        fetched_count: 0,
+        inserted_count: 0,
+        skipped_count: 0,
+        latest_period: null,
+        message: '未授权：请从本机触发，或配置 UPDATE_TOKEN 后携带 Bearer token',
+        updated_at: new Date().toISOString(),
+      },
+      { status: 401 }
+    );
+  }
+
   try {
     // 获取当前数据库最新期号
     const currentLatest = await getLatestPeriodInDb();
@@ -77,7 +121,7 @@ export async function POST(): Promise<NextResponse<UpdateResult>> {
       message: `更新失败: ${errorMessage}`,
       updated_at: new Date().toISOString(),
     };
-    lastUpdateResult = result;
+    // 出错时不覆盖 lastUpdateResult，保留上一次成功的更新状态供 GET 查询
     return NextResponse.json(result, { status: 500 });
   }
 }

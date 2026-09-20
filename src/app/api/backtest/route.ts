@@ -1,18 +1,17 @@
 import { NextResponse } from 'next/server';
 import { getAllDraws } from '@/storage/database/local-store';
 import { backtest } from '@/lib/lottery-engine';
+import { parseWeight, parsePositiveInt } from '@/lib/parse-params';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const sampleSize = parseInt(searchParams.get('sample') || '100');
+  const sampleSize = parsePositiveInt(searchParams.get('sample'), 100, 500);
 
   // 可选权重参数：与实际预测入口保持一致的回测口径
-  const frequency = parseFloat(searchParams.get('frequency') ?? '');
-  const recency = parseFloat(searchParams.get('recency') ?? '');
-  const balance = parseFloat(searchParams.get('balance') ?? '');
-  const weights = Number.isFinite(frequency) && Number.isFinite(recency) && Number.isFinite(balance)
-    ? { frequency, recency, balance }
-    : undefined;
+  const frequency = parseWeight(searchParams.get('frequency'), 0.4);
+  const recency = parseWeight(searchParams.get('recency'), 0.35);
+  const balance = parseWeight(searchParams.get('balance'), 0.25);
+  const weights = { frequency, recency, balance };
 
   try {
     const allDraws = getAllDraws();

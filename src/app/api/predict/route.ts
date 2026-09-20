@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server';
 import { getAllDraws } from '@/storage/database/local-store';
 import { predict } from '@/lib/lottery-engine';
+import { parseWeight } from '@/lib/parse-params';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const freqWeight = parseFloat(searchParams.get('frequency') || '0.4');
-  const recencyWeight = parseFloat(searchParams.get('recency') || '0.35');
-  const balanceWeight = parseFloat(searchParams.get('balance') || '0.25');
+  const freqWeight = parseWeight(searchParams.get('frequency'), 0.4);
+  const recencyWeight = parseWeight(searchParams.get('recency'), 0.35);
+  const balanceWeight = parseWeight(searchParams.get('balance'), 0.25);
 
   try {
     const allDraws = getAllDraws();

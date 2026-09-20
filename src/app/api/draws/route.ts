@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getAllDraws } from '@/storage/database/local-store';
+import { parsePositiveInt } from '@/lib/parse-params';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const limit = parseInt(searchParams.get('limit') || '50');
-  const offset = parseInt(searchParams.get('offset') || '0');
+  const limit = parsePositiveInt(searchParams.get('limit'), 50, 200);
+  const offset = Math.max(0, Number(searchParams.get('offset')) || 0);
 
   try {
     // 接口按期号降序分页（offset=0 为最新一页）
