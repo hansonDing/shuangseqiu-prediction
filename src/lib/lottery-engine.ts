@@ -651,7 +651,8 @@ export function predict(draws: DrawRecord[], weights?: {
   frequency: number;
   recency: number;
   balance: number;
-}): PredictionCombo[] {
+}, count: number = 8): PredictionCombo[] {
+  const comboCount = Math.min(20, Math.max(1, Math.trunc(count) || 8));
   const w = { frequency: 0.35, recency: 0.3, balance: 0.35, ...weights };
   const sorted = [...draws].sort((a, b) => a.period.localeCompare(b.period));
   const total = sorted.length;
@@ -929,7 +930,7 @@ export function predict(draws: DrawRecord[], weights?: {
   }
 
   // 后续 7 组：贪心选择覆盖最多新号码的组合 (质量+覆盖平衡)
-  for (let i = 1; i < 8; i++) {
+  for (let i = 1; i < comboCount; i++) {
     let bestCandidate: typeof candidatePool[0] | null = null;
     let bestNewCoverage = -1;
 
@@ -960,7 +961,7 @@ export function predict(draws: DrawRecord[], weights?: {
 
   // === 构建最终预测结果 ===
   const finalCombos: PredictionCombo[] = [];
-  for (let i = 0; i < selectedCombos.length && i < 8; i++) {
+  for (let i = 0; i < selectedCombos.length && i < comboCount; i++) {
     const combo = selectedCombos[i];
     const constraints = checkConstraints(combo.reds);
     finalCombos.push({
