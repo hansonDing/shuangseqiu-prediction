@@ -278,3 +278,25 @@ export async function settlePendingDraws(): Promise<{ settled: number; pending: 
     return { settled, pending: pendings.length - settled };
   });
 }
+
+/** 重置账本：清空所有模拟数据，资金恢复初始资本 */
+export async function resetSimulation(): Promise<{ initial: number }> {
+  return serialize(async () =>
+    tx(async () => {
+      await run('DELETE FROM settlements');
+      await run('DELETE FROM bets');
+      await run('DELETE FROM prediction_runs');
+      await run('DELETE FROM equity_snapshots');
+      await run('DELETE FROM fund_transactions');
+      await run('DELETE FROM operation_log');
+      const initial = Number(process.env.SIMULATE_INITIAL_CAPITAL) || 100000;
+      await run(
+        `INSERT OR REPLACE INTO account (id, initial_capital, cash, total_invested, total_prize) VALUES (1, ?, ?, 0, 0)`,
+        initial, initial
+      );
+      await addTxn('reset', 0, null, `账本重置，资金恢复 ${initial} 元`);
+      await logOp('reset', `模拟盘账本已重置，资金恢复 ${initial} 元`);
+      return { initial };
+    })
+  );
+}

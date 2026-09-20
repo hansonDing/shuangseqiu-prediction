@@ -68,3 +68,14 @@ test('开奖号入库后自动结算，资金对账一致', async () => {
   assert.equal(st.equity[st.equity.length - 1].period, target);
   assert.equal(st.logs.length >= 1, true);
 });
+
+test('重置：账本清零，资金恢复初始值', async () => {
+  const r = await repo.resetSimulation();
+  assert.equal(r.initial, 100000);
+  const st = await repo.getSimulationStatus();
+  assert.equal(st.account.cash, 100000);
+  assert.equal(st.account.total_invested, 0);
+  assert.equal(st.settlements.length, 0);
+  assert.equal(st.equity.length, 0);
+  assert.equal(st.pending, null);
+});
