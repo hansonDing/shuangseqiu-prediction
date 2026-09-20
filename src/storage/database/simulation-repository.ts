@@ -170,6 +170,29 @@ export async function getSimulationStatus() {
       bets: bets.map((b) => ({ reds: JSON.parse(b.reds), blue: b.blue, cost: b.cost })),
     };
   }
+  const settlements = await all<{
+    period: string;
+    red_hits: number;
+    blue_hit: boolean;
+    prize_tier: number;
+    prize: number;
+    profit: number;
+    settled_at: string;
+  }>(
+    `SELECT period, red_hits, blue_hit, prize_tier, prize, profit, settled_at
+     FROM settlements ORDER BY settled_at DESC, id DESC LIMIT 50`
+  );
+  const equity = await all<{
+    period: string;
+    cash: number;
+    cum_profit: number;
+    roi: number;
+  }>(
+    `SELECT period, cash, cum_profit, roi FROM equity_snapshots ORDER BY period ASC`
+  );
+  const logs = await all<{ type: string; message: string; created_at: string }>(
+    `SELECT type, message, created_at FROM operation_log ORDER BY id DESC LIMIT 20`
+  );
   return {
     account: {
       initial_capital: round2(account.initial_capital),
@@ -178,9 +201,80 @@ export async function getSimulationStatus() {
       total_prize: round2(account.total_prize),
     },
     pending,
-    settlements: [] as unknown[],
-    equity: [] as unknown[],
-    logs: [] as unknown[],
+    settlements: settlements.map((s) => ({
+      ...s,
+      prize: round2(s.prize),
+      profit: round2(s.profit),
+    })),
+    equity: equity.map((e) => ({
+      ...e,
+      cash: round2(e.cash),
+      cum_profit: round2(e.cum_profit),
+    })),
+    logs,
     config: { betCount: BET_COUNT, betCost: BET_COST },
   };
+}
+
+/** 结算所有 pending 持仓：开奖号已入库的期数逐注结算，缺失的保持挂起 */
+export async function settlePendingDraws(): Promise<{ settled: number; pending: number }> {
+  await ensureDrawsLoaded();
+  return serialize(async () => {
+    const pendings = await all<{ period: string }>(
+      `SELECT DISTINCT period FROM bets WHERE status = 'pending' ORDER BY period`
+    );
+    const byPeriod = new Map(getAllDraws().map((d) => [d.period, d]));
+    let settled = 0;
+    for (const { period } of pendings) {
+      const draw = byPeriod.get(period);
+      if (!draw) {
+        await tx(() => logOp('skip', `期号 ${period} 开奖数据未入库，持仓继续挂起`));
+        continue;
+      }
+      await tx(async () => {
+        const cfg = getPrizeConfig();
+        const bets = await all<{ id: number; reds: string; blue: number; cost: number }>(
+          `SELECT id, reds, blue, cost FROM bets WHERE period = ? AND status = 'pending'`,
+          period
+        );
+        let periodPrize = 0;
+        let periodCost = 0;
+        for (const b of bets) {
+          const res = judgeTicket(JSON.parse(b.reds), b.blue, draw, cfg);
+          const profit = res.prize - b.cost;
+          const sRows = await all<{ id: number }>(
+            `INSERT INTO settlements (id, bet_id, period, red_hits, blue_hit, prize_tier, prize, profit)
+             VALUES (nextval('seq_global'), ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+            b.id, period, res.redHits, res.blueHit, res.tier, res.prize, profit
+          );
+          await run(`UPDATE bets SET status = 'settled' WHERE id = ?`, b.id);
+          periodPrize += res.prize;
+          periodCost += b.cost;
+          if (res.prize > 0) {
+            await addTxn(
+              'prize', res.prize, sRows[0].id,
+              `期号 ${period} 中${TIER_NAMES[res.tier]} ${round2(res.prize)} 元`
+            );
+          }
+        }
+        await updateAccount(periodPrize, 0, periodPrize);
+        const acc = await getAccount();
+        const roi = acc.total_invested > 0
+          ? (acc.total_prize - acc.total_invested) / acc.total_invested
+          : 0;
+        await run(
+          `INSERT OR REPLACE INTO equity_snapshots (period, cash, total_invested, total_prize, cum_profit, roi)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          period, acc.cash, acc.total_invested, acc.total_prize,
+          acc.total_prize - acc.total_invested, roi
+        );
+        await logOp(
+          'settle',
+          `期号 ${period} 结算完成：${bets.length} 注，奖金 ${round2(periodPrize)} 元，投入 ${round2(periodCost)} 元`
+        );
+      });
+      settled++;
+    }
+    return { settled, pending: pendings.length - settled };
+  });
 }
