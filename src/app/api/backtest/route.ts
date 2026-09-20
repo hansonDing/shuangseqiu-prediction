@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllDraws } from '@/storage/database/local-store';
+import { getAllDraws, ensureDrawsLoaded } from '@/storage/database/draw-repository';
 import { backtest } from '@/lib/lottery-engine';
 import { parseWeight, parsePositiveInt } from '@/lib/parse-params';
 
@@ -14,6 +14,7 @@ export async function GET(request: Request) {
   const weights = { frequency, recency, balance };
 
   try {
+    await ensureDrawsLoaded();
     const allDraws = getAllDraws();
 
     if (allDraws.length < 15) {

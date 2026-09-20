@@ -31,7 +31,7 @@ function conn(): duckdb.Connection {
 
 export function run(sql: string, ...params: unknown[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    (conn().run as (...args: unknown[]) => void)(sql, ...params, (err: Error | null) =>
+    (conn().run as unknown as (...args: unknown[]) => void)(sql, ...params, (err: Error | null) =>
       err ? reject(err) : resolve()
     );
   });
@@ -42,7 +42,7 @@ export function all<T = Record<string, unknown>>(
   ...params: unknown[]
 ): Promise<T[]> {
   return new Promise((resolve, reject) => {
-    (conn().all as (...args: unknown[]) => void)(
+    (conn().all as unknown as (...args: unknown[]) => void)(
       sql,
       ...params,
       (err: Error | null, rows: T[]) => (err ? reject(err) : resolve(rows))
@@ -142,7 +142,10 @@ export function initDatabase(dbPath: string = DEFAULT_DB_PATH): Promise<void> {
       instance = new duckdb.Database(dbPath);
       connection = instance.connect();
       await run(SCHEMA);
-      await migrateFromJson();
+      // JSON 迁移仅在未指定 LOTTERY_DB_PATH（生产默认库）时执行，测试库不迁移
+      if (!process.env.LOTTERY_DB_PATH) {
+        await migrateFromJson();
+      }
     })();
   }
   return initPromise;
@@ -150,9 +153,10 @@ export function initDatabase(dbPath: string = DEFAULT_DB_PATH): Promise<void> {
 
 /** 首次启动：draws 表为空且 data/lottery_draws.json 存在时自动迁移（JSON 保留作备份） */
 async function migrateFromJson(): Promise<void> {
-  const { count } = await all<{ count: number }>(
+  const rows = await all<{ count: number }>(
     'SELECT count(*)::INT AS count FROM draws'
   );
+  const { count } = rows[0];
   if (count > 0) return;
   const jsonFile = path.join(process.cwd(), 'data', 'lottery_draws.json');
   if (!fs.existsSync(jsonFile)) return;

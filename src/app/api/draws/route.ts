@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllDraws } from '@/storage/database/local-store';
+import { getAllDraws, ensureDrawsLoaded } from '@/storage/database/draw-repository';
 import { parsePositiveInt } from '@/lib/parse-params';
 
 export async function GET(request: Request) {

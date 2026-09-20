@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllDraws } from '@/storage/database/local-store';
+import { getAllDraws, ensureDrawsLoaded } from '@/storage/database/draw-repository';
 import { predict } from '@/lib/lottery-engine';
 import { parseWeight } from '@/lib/parse-params';
 
@@ -10,6 +10,7 @@ export async function GET(request: Request) {
   const balanceWeight = parseWeight(searchParams.get('balance'), 0.25);
 
   try {
+    await ensureDrawsLoaded();
     const allDraws = getAllDraws();
 
     if (allDraws.length < 10) {

@@ -2,7 +2,7 @@
  * 双色球开奖数据抓取模块
  * 数据源：500.com (datachart.500.com/ssq)
  */
-import { upsertDraws, getLatestPeriod } from '../storage/database/local-store';
+import { upsertDraws, getLatestPeriod, ensureDrawsLoaded } from '../storage/database/draw-repository';
 
 interface LotteryDraw {
   period: string;
@@ -121,6 +121,7 @@ export async function syncDrawsToDatabase(draws: LotteryDraw[]): Promise<{
 }> {
   const { inserted, skipped } = await upsertDraws(draws);
 
+  await ensureDrawsLoaded();
   const latestPeriod = getLatestPeriod();
   return { inserted, skipped, latestPeriod };
 }
@@ -129,5 +130,6 @@ export async function syncDrawsToDatabase(draws: LotteryDraw[]): Promise<{
  * 获取存储中最新一期数据
  */
 export async function getLatestPeriodInDb(): Promise<string | null> {
+  await ensureDrawsLoaded();
   return getLatestPeriod();
 }

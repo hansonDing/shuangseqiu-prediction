@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
-import { getAllDraws } from '@/storage/database/local-store';
+import { getAllDraws, ensureDrawsLoaded } from '@/storage/database/draw-repository';
 import { analyze } from '@/lib/lottery-engine';
 
 export async function GET() {
   try {
     // 获取全部历史数据进行分析（按期号升序）
+    await ensureDrawsLoaded();
     const allDraws = getAllDraws();
 
     if (allDraws.length === 0) {
