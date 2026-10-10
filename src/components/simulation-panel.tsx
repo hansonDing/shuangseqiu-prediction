@@ -74,7 +74,8 @@ export function SimulationPanel() {
   const act = async (kind: 'buy' | 'reset') => {
     setBusy(kind);
     try {
-      const res = await fetch(`/api/simulation/${kind}`, { method: 'POST' });
+      // 走站内通道：令牌由服务端代持，前端不接触 UPDATE_TOKEN
+      const res = await fetch(`/api/simulation/${kind}/ui`, { method: 'POST' });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || body.message || `HTTP ${res.status}`);
       await refresh();

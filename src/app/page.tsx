@@ -226,7 +226,8 @@ export default function LotteryDashboard() {
   const handleUpdateData = async () => {
     setUpdateStatus({ updating: true, lastUpdate: null, message: '正在获取最新开奖数据...', error: false });
     try {
-      const res = await fetch('/api/update', { method: 'POST' });
+      // 走站内通道：令牌由服务端代持，前端不接触 UPDATE_TOKEN
+      const res = await fetch('/api/update/ui', { method: 'POST' });
       const data = await res.json().catch(() => null);
       if (data?.success) {
         setUpdateStatus({

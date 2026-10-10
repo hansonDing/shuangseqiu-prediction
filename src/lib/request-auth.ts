@@ -13,6 +13,50 @@ export function isLoopback(ip: string): boolean {
     || ip.startsWith('::ffff:7f00:');
 }
 
+/**
+ * 站内同源判定，用于「面向浏览器页面」的接口。
+ *
+ * 背景：写接口用 Bearer token 鉴权，但浏览器里的按钮不可能安全地持有令牌，
+ * 因此站内 UI 走单独的通道，用「同源」而不是「共享密钥」来限定调用方。
+ *
+ * 判定口径（按优先级）：
+ * 1. `Sec-Fetch-Site` —— 浏览器自动生成、页面脚本无法伪造，也不受反代改写 Host 影响。
+ *    为 `same-origin` 才放行；`cross-site` / `same-site` 一律拒绝。
+ * 2. 请求不带 Origin / Referer（curl、平台定时触发器等非浏览器调用）→ 放行，
+ *    这类调用方本就无法靠 Origin 约束，交由其它手段（token、单飞、冷却）兜住。
+ * 3. 带了 Origin / Referer 则必须与请求自身的 Host 一致，否则视为跨站调用予以拒绝。
+ *
+ * 兼容反代：Host 可能被改成内部地址，故同时接受 x-forwarded-host 与 request.url。
+ */
+export function isSameOrigin(request: Request): boolean {
+  const fetchSite = request.headers.get('sec-fetch-site');
+  if (fetchSite) return fetchSite === 'same-origin';
+
+  const source = request.headers.get('origin') ?? request.headers.get('referer');
+  if (!source) return true;
+
+  let sourceHost: string;
+  try {
+    sourceHost = new URL(source).host;
+  } catch {
+    return false;
+  }
+  if (!sourceHost) return false;
+
+  const candidates: string[] = [];
+  for (const name of ['x-forwarded-host', 'host'] as const) {
+    const value = request.headers.get(name);
+    if (value) candidates.push(value.split(',')[0].trim());
+  }
+  try {
+    candidates.push(new URL(request.url).host);
+  } catch {
+    // request.url 不可解析时忽略该项
+  }
+
+  return candidates.some((host) => host === sourceHost);
+}
+
 export function isAuthorized(request: Request): boolean {
   const token = process.env.UPDATE_TOKEN;
   if (token) {

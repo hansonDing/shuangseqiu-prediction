@@ -1,0 +1,31 @@
+# 依赖与构建产物：镜像内重新安装 / 构建
+node_modules
+.pnpm-store
+.next
+dist
+tsconfig.tsbuildinfo
+
+# 版本库与本地环境
+.git
+.gitignore
+*.log
+.env
+.env.*
+.coze
+
+# .babelrc 只服务于 react-dev-inspector 的开发期调试（preset-react 固定 development=true），
+# 保留在生产构建里会让 Next 注入 jsxDEV，预渲染直接失败，故不进入镜像。
+.babelrc
+
+# 运行期数据：保留 lottery_draws.json 作为种子，排除数据库本体与 WAL
+data/*.duckdb
+data/*.duckdb.wal
+data/*.duckdb.tmp
+
+# 文档与测试：不参与镜像构建
+docs
+tests
+*.md
+
+# 其他无关文件
+.DS_Store

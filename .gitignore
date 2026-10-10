@@ -164,5 +164,6 @@ Desktop.ini
 .coze-logs
 .codegraph/
 
-# 本地开奖数据存储
-data/
+# 本地开奖数据存储（数据库本体与 WAL 不入库；种子 JSON 保留，便于克隆后直接构建镜像）
+data/*
+!data/lottery_draws.json

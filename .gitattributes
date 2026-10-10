@@ -1,0 +1,5 @@
+# 统一换行符，避免 Windows 检出的 CRLF 破坏 Linux 容器内的脚本执行
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.duckdb binary
